@@ -10,9 +10,13 @@
 create or replace function public.is_company_member_of(_company_account_id uuid)
 returns boolean
 language sql
+security definer
 stable
 set search_path = public
+set row_security = off
 as $$
+  -- RLS policy recursion回避: company_members / 0007系データへの判定は
+  -- 本関数内でboolean判定のみ行い、policy再帰を起こさない。
   select exists (
     select 1
     from public.company_members cm
@@ -25,9 +29,12 @@ $$;
 create or replace function public.has_company_role(_company_account_id uuid, _roles app_role[])
 returns boolean
 language sql
+security definer
 stable
 set search_path = public
+set row_security = off
 as $$
+  -- RLS policy recursion回避: 会社メンバー/ロール判定を行うboolean helper。
   select exists (
     select 1
     from public.company_members cm
@@ -41,9 +48,12 @@ $$;
 create or replace function public.has_active_company_nda(_company_account_id uuid)
 returns boolean
 language sql
+security definer
 stable
 set search_path = public
+set row_security = off
 as $$
+  -- RLS policy recursion回避: NDA有効性確認を関数内で最短boolean化。
   select exists (
     select 1
     from public.nda_acceptances na
@@ -78,9 +88,12 @@ create or replace function public.company_has_approved_disclosure(
 )
 returns boolean
 language sql
+security definer
 stable
 set search_path = public
+set row_security = off
 as $$
+  -- RLS policy recursion回避: NDA/開示承認条件を一括判定するboolean helper。
   select exists (
     select 1
     from public.company_disclosure_requests cdr
