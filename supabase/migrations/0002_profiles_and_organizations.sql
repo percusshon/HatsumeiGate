@@ -69,7 +69,7 @@ create table if not exists public.organization_members (
   role organization_member_role not null default 'member',
   created_by uuid references public.users_profile(id) on delete set null,
   created_at timestamptz not null default now(),
-  deleted_at timestamptz,
+  deleted_at timestamptz
   -- allow one active membership per user/organization (soft-delete aware)
 );
 
