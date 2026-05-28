@@ -65,6 +65,15 @@ export default async function InventionDetailPage({
         </div>
       </section>
 
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href={`/inventor/inventions/${invention.id}/edit`}
+          className="inline-block rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+        >
+          下書きを編集
+        </Link>
+      </div>
+
       <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
         次フェーズでsubmit/API実装を追加します。
       </div>
