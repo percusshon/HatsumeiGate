@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 export type SimpleUserProfile = {
   id: string;
   role: string | null;
+  roles: string[];
   display_name: string | null;
   email: string | null;
 };
@@ -28,9 +29,18 @@ export async function getCurrentUser(): Promise<SimpleUserProfile | null> {
     return null;
   }
 
+  const { data: rolesRows, error: rolesError } = await supabase
+    .from('user_app_roles')
+    .select('role')
+    .eq('user_id', user.id)
+    .is('deleted_at', null);
+
+  const roles = rolesError ? [] : (rolesRows ?? []).map((row) => row.role);
+
   return {
     id: profile.id,
-    role: null,
+    role: roles[0] ?? null,
+    roles,
     display_name: profile.display_name,
     email: profile.email
   };

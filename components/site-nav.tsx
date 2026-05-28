@@ -7,7 +7,8 @@ const links = [
   { href: '/operator', label: 'Operator' },
   { href: '/company', label: 'Company' },
   { href: '/partner', label: 'Partner' },
-  { href: '/admin', label: 'Admin' }
+  { href: '/admin', label: 'Admin' },
+  { href: '/logout', label: 'Logout' }
 ];
 
 export function SiteNav() {
