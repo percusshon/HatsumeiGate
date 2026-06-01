@@ -1,9 +1,17 @@
 import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
+import { inventorFacingStatusLabel } from '@/lib/invention/status';
 
 type SearchParams = {
   id: string;
+};
+
+type InventorStatusEvent = {
+  id: string;
+  to_status: string | null;
+  reason: string | null;
+  created_at: string | null;
 };
 
 export default async function InventionDetailPage({
@@ -33,14 +41,14 @@ export default async function InventionDetailPage({
     )
     .eq('id', params.id)
     .eq('inventor_id', currentUser.id)
-    .in('status', ['draft', 'submitted'])
+    .is('deleted_at', null)
     .maybeSingle();
 
   if (error || !invention) {
     return (
       <div className="space-y-4">
         <h2 className="text-2xl font-bold">発明が見つかりません</h2>
-        <p className="text-slate-700">アクセスできないID、または他のユーザーの下書きです。</p>
+        <p className="text-slate-700">アクセスできないID、または他のユーザーの案件です。</p>
         <Link href="/inventor" className="inline-block rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold">
           Inventorダッシュボードへ戻る
         </Link>
@@ -48,12 +56,21 @@ export default async function InventionDetailPage({
     );
   }
 
+  // RLS（invention_status_events_select_visible_own）により、
+  // 発明者には visible_to_inventor = true のイベントのみ返る。
+  const { data: statusEventRows } = await supabase
+    .from('invention_status_events')
+    .select('id, to_status, reason, created_at')
+    .eq('invention_id', params.id)
+    .order('created_at', { ascending: false });
+  const statusEvents = (statusEventRows ?? []) as InventorStatusEvent[];
+
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">発明下書き詳細</h2>
+      <h2 className="text-2xl font-bold">発明詳細</h2>
       <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
         <h3 className="text-xl font-semibold">{invention.title}</h3>
-        <p className="text-sm text-slate-700">ステータス: {invention.status}</p>
+        <p className="text-sm text-slate-700">ステータス: {inventorFacingStatusLabel(invention.status)}</p>
         <div className="space-y-2 text-sm text-slate-700">
           <p>対象ユーザー: {invention.target_users ?? '未入力'}</p>
           <p>使用シーン: {invention.use_case ?? '未入力'}</p>
@@ -84,10 +101,26 @@ export default async function InventionDetailPage({
         ) : null}
       </div>
 
-      {invention.status === 'submitted' ? (
-        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          この案件は提出済みです。詳細開示や審査管理は運営フローで扱います。
-        </div>
+      {invention.status !== 'draft' ? (
+        <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
+          <h4 className="text-lg font-semibold">審査・進捗の履歴</h4>
+          {statusEvents.length === 0 ? (
+            <p className="text-sm text-slate-600">運営からの共有はまだありません。</p>
+          ) : (
+            <ul className="space-y-2">
+              {statusEvents.map((event) => (
+                <li key={event.id} className="rounded border border-slate-100 bg-slate-50 p-2 text-sm text-slate-700">
+                  <p>状態: {inventorFacingStatusLabel(event.to_status)}</p>
+                  {event.reason ? <p className="text-xs text-slate-600">メッセージ: {event.reason}</p> : null}
+                  <p className="text-xs text-slate-500">
+                    {event.created_at ? new Date(event.created_at).toLocaleString('ja-JP') : '日時未設定'}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-slate-500">詳細開示や審査の内部情報は運営フローで管理されます。</p>
+        </section>
       ) : null}
 
       <Link href="/inventor" className="inline-block text-sm text-blue-700 hover:underline">

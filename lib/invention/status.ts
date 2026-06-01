@@ -75,6 +75,37 @@ export function inventionStatusLabel(status: string | null | undefined): string 
   return INVENTION_STATUS_LABELS[status as InventionStatus] ?? status;
 }
 
+// 発明者向け表示ラベル（state machine doc §7）。
+// ip_strategy_review / prototype_review / attorney_review_ready /
+// company_disclosure_ready などの内部フェーズは「審査中」にマスクして
+// 内部運用情報を発明者へ漏らさない。
+export const INVENTOR_FACING_STATUS_LABELS: Record<InventionStatus, string> = {
+  draft: '下書き',
+  submitted: '受理（審査中）',
+  screening: '審査中',
+  needs_more_info: '追加情報のお願い',
+  prior_art_research: '類似性の確認中',
+  ip_strategy_review: '審査中',
+  prototype_review: '審査中',
+  attorney_review_ready: '審査中',
+  company_disclosure_ready: '審査中',
+  company_reviewing: '企業検討中',
+  negotiating: '交渉中',
+  licensed: 'ライセンス成立',
+  assigned: '譲渡成立',
+  joint_development: '共同開発成立',
+  rejected: '見送り',
+  withdrawn: '取り下げ',
+  archived: '終了'
+};
+
+export function inventorFacingStatusLabel(status: string | null | undefined): string {
+  if (!status) {
+    return '未設定';
+  }
+  return INVENTOR_FACING_STATUS_LABELS[status as InventionStatus] ?? '審査中';
+}
+
 export function getOperatorNextStatuses(current: string | null | undefined): InventionStatus[] {
   if (!current) {
     return [];
