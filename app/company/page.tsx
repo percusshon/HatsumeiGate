@@ -2,8 +2,13 @@ import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { companyReviewStatusLabel } from '@/lib/company/review';
-import { disclosureLevelLabel, disclosureRequestStatusLabel } from '@/lib/company/disclosure';
-import { acceptNdaAction } from './actions';
+import {
+  DISCLOSURE_APPROVABLE_LEVELS,
+  DISCLOSURE_LEVEL_LABELS,
+  disclosureLevelLabel,
+  disclosureRequestStatusLabel
+} from '@/lib/company/disclosure';
+import { acceptNdaAction, createDisclosureRequestAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +46,15 @@ const ERROR_MESSAGES: Record<string, string> = {
   company_id_missing: '企業IDが指定されていません。',
   forbidden: 'この操作には企業メンバー権限が必要です。',
   nda_version_required: 'NDAバージョンを入力してください。',
-  nda_failed: 'NDA同意の記録に失敗しました。'
+  nda_failed: 'NDA同意の記録に失敗しました。',
+  invention_id_invalid: '発明ID（UUID）の形式が不正です。',
+  level_invalid: '希望する開示レベルの指定が不正です。',
+  request_failed: '開示申請の作成に失敗しました。'
+};
+
+const SUCCESS_MESSAGES: Record<string, string> = {
+  nda_accepted: 'NDA同意を記録しました。',
+  request_created: '開示申請を作成しました。発明者の同意と運営承認をお待ちください。'
 };
 
 function ndaIsActive(nda: NdaAcceptance, nowIso: string): boolean {
@@ -99,7 +112,7 @@ export default async function CompanyPage({
 
   const nowIso = new Date().toISOString();
   const errorMessage = searchParams?.error ? ERROR_MESSAGES[searchParams.error] : undefined;
-  const showSuccess = searchParams?.success === 'nda_accepted';
+  const successMessage = searchParams?.success ? SUCCESS_MESSAGES[searchParams.success] : undefined;
 
   return (
     <div className="space-y-6">
@@ -111,8 +124,8 @@ export default async function CompanyPage({
       {errorMessage ? (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>
       ) : null}
-      {showSuccess ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">NDA同意を記録しました。</p>
+      {successMessage ? (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{successMessage}</p>
       ) : null}
 
       {companies.length === 0 ? (
@@ -195,6 +208,48 @@ export default async function CompanyPage({
                   </div>
                   <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
                     NDAに同意する
+                  </button>
+                </form>
+
+                <form action={createDisclosureRequestAction} className="space-y-3 border-t border-slate-200 pt-3">
+                  <input type="hidden" name="company_account_id" value={company.id} />
+                  <p className="text-sm font-medium text-slate-700">開示申請を作成</p>
+                  <div className="space-y-1">
+                    <label htmlFor={`invention_id_${company.id}`} className="block text-sm text-slate-700">
+                      発明ID（運営から共有されたUUID）
+                    </label>
+                    <input
+                      id={`invention_id_${company.id}`}
+                      name="invention_id"
+                      type="text"
+                      required
+                      placeholder="00000000-0000-0000-0000-000000000000"
+                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor={`requested_level_${company.id}`} className="block text-sm text-slate-700">
+                      希望する開示レベル
+                    </label>
+                    <select
+                      id={`requested_level_${company.id}`}
+                      name="requested_level"
+                      required
+                      defaultValue=""
+                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    >
+                      <option value="" disabled>
+                        選択してください
+                      </option>
+                      {DISCLOSURE_APPROVABLE_LEVELS.map((level) => (
+                        <option key={level} value={level}>
+                          {DISCLOSURE_LEVEL_LABELS[level]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="submit" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800">
+                    開示申請を送信
                   </button>
                 </form>
               </li>
