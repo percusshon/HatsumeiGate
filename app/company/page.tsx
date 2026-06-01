@@ -30,6 +30,7 @@ type NdaAcceptance = {
 
 type DisclosureRequest = {
   company_account_id: string;
+  invention_id: string;
   requested_level: string;
   approved_level: string | null;
   status: string;
@@ -91,7 +92,7 @@ export default async function CompanyPage({
 
   const { data: requestRows } = await supabase
     .from('company_disclosure_requests')
-    .select('company_account_id, requested_level, approved_level, status, created_at')
+    .select('company_account_id, invention_id, requested_level, approved_level, status, created_at')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
   const requests = (requestRows ?? []) as DisclosureRequest[];
@@ -160,6 +161,17 @@ export default async function CompanyPage({
                           申請: {disclosureLevelLabel(request.requested_level)} / 承認:{' '}
                           {request.approved_level ? disclosureLevelLabel(request.approved_level) : '未承認'} /{' '}
                           {disclosureRequestStatusLabel(request.status)}
+                          {request.status === 'approved' && request.approved_level ? (
+                            <>
+                              {' '}
+                              <Link
+                                href={`/company/inventions/${request.invention_id}`}
+                                className="text-blue-700 hover:underline"
+                              >
+                                開示情報を見る
+                              </Link>
+                            </>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
