@@ -46,6 +46,13 @@ export default async function OperatorPage() {
         cta="開示申請をレビューする"
       />
 
+      <SectionCard
+        title="取引パイプライン"
+        description="運営が担う取引（deal）のステータス遷移を管理します。"
+        href="/operator/deals"
+        cta="取引を管理する"
+      />
+
       <div className="rounded-md border border-slate-200 bg-white p-4">
         <p className="text-sm text-slate-700">現在の主なロール: {currentUser.role ?? '未設定'}</p>
         <p className="mt-1 text-sm text-slate-700">補助ロール: {currentUser.roles.join(', ') || 'なし'}</p>
