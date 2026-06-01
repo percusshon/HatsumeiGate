@@ -16,8 +16,17 @@ import {
   SCREENING_SCORE_MAX,
   SCREENING_SCORE_MIN
 } from '@/lib/invention/screening';
+import {
+  IP_STRATEGY_TYPES,
+  IP_STRATEGY_TYPE_LABELS,
+  PRIOR_ART_RISK_LEVELS,
+  PRIOR_ART_RISK_LABELS,
+  ipStrategyTypeLabel,
+  priorArtRiskLabel
+} from '@/lib/invention/ip-strategy';
 import { updateInventionStatusAction } from './actions';
 import { createScreeningReportAction } from './screening-actions';
+import { createPriorArtItemAction, createIpStrategyNoteAction } from './notes-actions';
 
 type RouteParams = {
   id: string;
@@ -35,12 +44,18 @@ const STATUS_ERROR_MESSAGES: Record<string, string> = {
   report_failed: '審査レポートの保存に失敗しました。',
   score_failed: 'レポートは保存されましたが、スコア記録に失敗しました。',
   invalid_score: 'スコアは0〜5の整数で入力してください。',
-  empty_report: '審査レポートに少なくとも1項目を入力してください。'
+  empty_report: '審査レポートに少なくとも1項目を入力してください。',
+  empty_prior_art: '先行技術はタイトル・URL・要約のいずれかを入力してください。',
+  prior_art_failed: '先行技術の保存に失敗しました。',
+  strategy_type_required: '知財方針の種別を選択してください。',
+  ip_strategy_failed: '知財方針ノートの保存に失敗しました。'
 };
 
 const SUCCESS_MESSAGES: Record<string, string> = {
   status_updated: 'ステータスを更新しました。',
-  report_created: '審査レポートを保存しました。'
+  report_created: '審査レポートを保存しました。',
+  prior_art_created: '先行技術を保存しました。',
+  ip_strategy_created: '知財方針ノートを保存しました。'
 };
 
 type InventionDetail = {
@@ -97,6 +112,26 @@ type ScreeningReport = {
   summary: string | null;
   recommendation: string | null;
   next_action: string | null;
+  created_at: string | null;
+};
+
+type PriorArtItem = {
+  id: string;
+  title: string | null;
+  source_url: string | null;
+  source_type: string | null;
+  publication_identifier: string | null;
+  summary: string | null;
+  relevance_note: string | null;
+  risk_level: string | null;
+  created_at: string | null;
+};
+
+type IpStrategyNote = {
+  id: string;
+  strategy_type: string;
+  note: string | null;
+  requires_attorney_review: boolean | null;
   created_at: string | null;
 };
 
@@ -200,6 +235,24 @@ export default async function OperatorInventionDetailPage({
       (scoresByReport[score.report_id] ??= []).push(score);
     }
   }
+
+  const { data: priorArtRows } = await supabase
+    .from('prior_art_items')
+    .select('id, title, source_url, source_type, publication_identifier, summary, relevance_note, risk_level, created_at')
+    .eq('invention_id', params.id)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+
+  const priorArtItems = (priorArtRows ?? []) as PriorArtItem[];
+
+  const { data: ipStrategyRows } = await supabase
+    .from('ip_strategy_notes')
+    .select('id, strategy_type, note, requires_attorney_review, created_at')
+    .eq('invention_id', params.id)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+
+  const ipStrategyNotes = (ipStrategyRows ?? []) as IpStrategyNote[];
 
   const inventionDetail = invention as InventionDetail;
   const nextStatuses = getOperatorNextStatuses(inventionDetail.status);
@@ -373,6 +426,103 @@ export default async function OperatorInventionDetailPage({
 
         <p className="text-xs text-slate-500">
           発明者向け要約と内部詳細の表示分離・編集・削除は今後の増分で扱います。断定的な保証表現は記載しないでください。
+        </p>
+      </section>
+
+      <section className="space-y-4 rounded-md border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-semibold">先行技術メモ</h4>
+
+        {priorArtItems.length === 0 ? (
+          <p className="text-sm text-slate-600">先行技術メモはまだありません。</p>
+        ) : (
+          <ul className="space-y-3">
+            {priorArtItems.map((item) => (
+              <li key={item.id} className="space-y-1 rounded border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700">
+                <p className="font-semibold">{item.title || 'タイトル未設定'}</p>
+                <p className="text-xs text-slate-500">リスク: {priorArtRiskLabel(item.risk_level)} / 種別: {item.source_type || '未設定'}</p>
+                {item.source_url ? <p className="break-all text-xs text-blue-700">{item.source_url}</p> : null}
+                <p>識別子: {item.publication_identifier || '未入力'}</p>
+                <p>要約: {item.summary || '未入力'}</p>
+                <p>関連性メモ: {item.relevance_note || '未入力'}</p>
+                <p className="text-xs text-slate-500">作成日: {item.created_at ? new Date(item.created_at).toLocaleString('ja-JP') : '未設定'}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form action={createPriorArtItemAction} className="space-y-3 border-t border-slate-200 pt-4">
+          <input type="hidden" name="invention_id" value={inventionDetail.id} />
+          <p className="text-sm font-medium text-slate-700">先行技術を追加</p>
+          <input name="title" type="text" placeholder="タイトル" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          <input name="source_url" type="url" placeholder="出典URL" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <input name="source_type" type="text" placeholder="出典種別（特許文献/製品 等）" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+            <input name="publication_identifier" type="text" placeholder="公開番号など" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="risk_level" className="block text-sm text-slate-700">類似リスク</label>
+            <select id="risk_level" name="risk_level" defaultValue="" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+              <option value="">未設定</option>
+              {PRIOR_ART_RISK_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {PRIOR_ART_RISK_LABELS[level]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <textarea name="summary" rows={2} placeholder="要約" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          <textarea name="relevance_note" rows={2} placeholder="関連性メモ" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+            先行技術を保存
+          </button>
+        </form>
+      </section>
+
+      <section className="space-y-4 rounded-md border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-semibold">知財方針ノート</h4>
+
+        {ipStrategyNotes.length === 0 ? (
+          <p className="text-sm text-slate-600">知財方針ノートはまだありません。</p>
+        ) : (
+          <ul className="space-y-3">
+            {ipStrategyNotes.map((note) => (
+              <li key={note.id} className="space-y-1 rounded border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700">
+                <p className="font-semibold">{ipStrategyTypeLabel(note.strategy_type)}</p>
+                <p>ノート: {note.note || '未入力'}</p>
+                <p className="text-xs text-slate-500">弁理士レビュー要否: {note.requires_attorney_review ? '要' : '不要'}</p>
+                <p className="text-xs text-slate-500">作成日: {note.created_at ? new Date(note.created_at).toLocaleString('ja-JP') : '未設定'}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form action={createIpStrategyNoteAction} className="space-y-3 border-t border-slate-200 pt-4">
+          <input type="hidden" name="invention_id" value={inventionDetail.id} />
+          <p className="text-sm font-medium text-slate-700">知財方針ノートを追加</p>
+          <div className="space-y-1">
+            <label htmlFor="strategy_type" className="block text-sm text-slate-700">方針種別</label>
+            <select id="strategy_type" name="strategy_type" required defaultValue="" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+              <option value="" disabled>
+                選択してください
+              </option>
+              {IP_STRATEGY_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {IP_STRATEGY_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <textarea name="note" rows={3} placeholder="方針メモ（断定的な保証表現は記載しない）" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" name="requires_attorney_review" />
+            弁理士レビューが必要
+          </label>
+          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+            知財方針ノートを保存
+          </button>
+        </form>
+        <p className="text-xs text-slate-500">
+          本ノートは内部整理用です。運営は弁理士業務（特許庁手続の代理）を行いません。
         </p>
       </section>
 
