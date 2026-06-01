@@ -6,7 +6,18 @@ import {
   getOperatorNextStatuses,
   inventionStatusLabel
 } from '@/lib/invention/status';
+import {
+  SCREENING_AXES,
+  SCREENING_RATINGS,
+  screeningAxisLabel,
+  screeningRatingLabel,
+  SCREENING_RATING_LABELS,
+  SCREENING_AXIS_LABELS,
+  SCREENING_SCORE_MAX,
+  SCREENING_SCORE_MIN
+} from '@/lib/invention/screening';
 import { updateInventionStatusAction } from './actions';
+import { createScreeningReportAction } from './screening-actions';
 
 type RouteParams = {
   id: string;
@@ -14,13 +25,22 @@ type RouteParams = {
 
 const STATUS_ERROR_MESSAGES: Record<string, string> = {
   invention_id_missing: '案件IDが指定されていません。',
-  forbidden: 'この操作にはoperator/admin権限が必要です。',
+  forbidden: 'この操作には権限（operator/reviewer/admin）が必要です。',
   status_required: '遷移先ステータスを選択してください。',
   not_found: '対象案件が見つかりませんでした。',
   same_status: '現在と同じステータスへは遷移できません。',
   invalid_transition: 'その遷移は許可されていません。',
   update_failed: 'ステータス更新に失敗しました。',
-  status_event_failed: 'ステータスは更新されましたが、イベント記録に失敗しました。'
+  status_event_failed: 'ステータスは更新されましたが、イベント記録に失敗しました。',
+  report_failed: '審査レポートの保存に失敗しました。',
+  score_failed: 'レポートは保存されましたが、スコア記録に失敗しました。',
+  invalid_score: 'スコアは0〜5の整数で入力してください。',
+  empty_report: '審査レポートに少なくとも1項目を入力してください。'
+};
+
+const SUCCESS_MESSAGES: Record<string, string> = {
+  status_updated: 'ステータスを更新しました。',
+  report_created: '審査レポートを保存しました。'
 };
 
 type InventionDetail = {
@@ -60,6 +80,23 @@ type StatusEvent = {
   to_status: string | null;
   reason: string | null;
   visible_to_inventor: boolean | null;
+  created_at: string | null;
+};
+
+type ScreeningScore = {
+  id: string;
+  report_id: string;
+  axis: string;
+  score: number;
+  rationale: string | null;
+};
+
+type ScreeningReport = {
+  id: string;
+  overall_rating: string | null;
+  summary: string | null;
+  recommendation: string | null;
+  next_action: string | null;
   created_at: string | null;
 };
 
@@ -139,10 +176,35 @@ export default async function OperatorInventionDetailPage({
     .eq('invention_id', params.id)
     .order('created_at', { ascending: false });
 
+  const { data: reportRows } = await supabase
+    .from('invention_screening_reports')
+    .select('id, overall_rating, summary, recommendation, next_action, created_at')
+    .eq('invention_id', params.id)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+
+  const reports = (reportRows ?? []) as ScreeningReport[];
+
+  const scoresByReport: Record<string, ScreeningScore[]> = {};
+  if (reports.length > 0) {
+    const { data: scoreRows } = await supabase
+      .from('invention_screening_scores')
+      .select('id, report_id, axis, score, rationale')
+      .in(
+        'report_id',
+        reports.map((report) => report.id)
+      )
+      .is('deleted_at', null);
+
+    for (const score of (scoreRows ?? []) as ScreeningScore[]) {
+      (scoresByReport[score.report_id] ??= []).push(score);
+    }
+  }
+
   const inventionDetail = invention as InventionDetail;
   const nextStatuses = getOperatorNextStatuses(inventionDetail.status);
   const errorMessage = searchParams?.error ? STATUS_ERROR_MESSAGES[searchParams.error] : undefined;
-  const showSuccess = searchParams?.success === 'status_updated';
+  const successMessage = searchParams?.success ? SUCCESS_MESSAGES[searchParams.success] : undefined;
 
   return (
     <div className="space-y-6">
@@ -154,9 +216,9 @@ export default async function OperatorInventionDetailPage({
       {errorMessage ? (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>
       ) : null}
-      {showSuccess ? (
+      {successMessage ? (
         <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-          ステータスを更新しました。
+          {successMessage}
         </p>
       ) : null}
 
@@ -196,6 +258,122 @@ export default async function OperatorInventionDetailPage({
             <p>同意時刻: {check.accepted_terms_at ? new Date(check.accepted_terms_at).toLocaleString('ja-JP') : '未記録'}</p>
           </div>
         )}
+      </section>
+
+      <section className="space-y-4 rounded-md border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-semibold">審査レポート</h4>
+
+        {reports.length === 0 ? (
+          <p className="text-sm text-slate-600">審査レポートはまだありません。</p>
+        ) : (
+          <ul className="space-y-3">
+            {reports.map((report) => {
+              const scores = scoresByReport[report.id] ?? [];
+              return (
+                <li key={report.id} className="space-y-2 rounded border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700">
+                  <p className="font-semibold">総合判定: {screeningRatingLabel(report.overall_rating)}</p>
+                  <p className="text-xs text-slate-500">
+                    作成日: {report.created_at ? new Date(report.created_at).toLocaleString('ja-JP') : '未設定'}
+                  </p>
+                  <p>要約: {report.summary || '未入力'}</p>
+                  <p>推奨アクション: {report.recommendation || '未入力'}</p>
+                  <p>次アクション: {report.next_action || '未入力'}</p>
+                  {scores.length > 0 ? (
+                    <ul className="mt-1 space-y-1">
+                      {scores.map((score) => (
+                        <li key={score.id} className="text-xs text-slate-600">
+                          {screeningAxisLabel(score.axis)}: {score.score} / {SCREENING_SCORE_MAX}
+                          {score.rationale ? `（${score.rationale}）` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-slate-500">軸別スコアの記録はありません。</p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <form action={createScreeningReportAction} className="space-y-4 border-t border-slate-200 pt-4">
+          <input type="hidden" name="invention_id" value={inventionDetail.id} />
+          <p className="text-sm font-medium text-slate-700">新規審査レポートを追加</p>
+
+          <div className="space-y-1">
+            <label htmlFor="overall_rating" className="block text-sm font-medium text-slate-700">
+              総合判定（A〜E・任意）
+            </label>
+            <select
+              id="overall_rating"
+              name="overall_rating"
+              defaultValue=""
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">未判定</option>
+              {SCREENING_RATINGS.map((rating) => (
+                <option key={rating} value={rating}>
+                  {SCREENING_RATING_LABELS[rating]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="summary" className="block text-sm font-medium text-slate-700">
+              要約（任意）
+            </label>
+            <textarea id="summary" name="summary" rows={2} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="recommendation" className="block text-sm font-medium text-slate-700">
+              推奨アクション（任意）
+            </label>
+            <textarea id="recommendation" name="recommendation" rows={2} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="next_action" className="block text-sm font-medium text-slate-700">
+              次アクション・期限（任意）
+            </label>
+            <textarea id="next_action" name="next_action" rows={2} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-slate-700">評価軸スコア（各 {SCREENING_SCORE_MIN}〜{SCREENING_SCORE_MAX}・任意）</p>
+            {SCREENING_AXES.map((axis) => (
+              <div key={axis} className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_5rem_1fr] sm:items-center">
+                <label htmlFor={`score_${axis}`} className="text-sm text-slate-700">
+                  {SCREENING_AXIS_LABELS[axis]}
+                </label>
+                <input
+                  id={`score_${axis}`}
+                  name={`score_${axis}`}
+                  type="number"
+                  min={SCREENING_SCORE_MIN}
+                  max={SCREENING_SCORE_MAX}
+                  step={1}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <input
+                  name={`rationale_${axis}`}
+                  type="text"
+                  placeholder="根拠（任意）"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
+            ))}
+          </div>
+
+          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+            審査レポートを保存
+          </button>
+        </form>
+
+        <p className="text-xs text-slate-500">
+          発明者向け要約と内部詳細の表示分離・編集・削除は今後の増分で扱います。断定的な保証表現は記載しないでください。
+        </p>
       </section>
 
       <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">

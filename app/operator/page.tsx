@@ -43,7 +43,7 @@ export default async function OperatorPage() {
       </div>
 
       <p className="rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-700">
-        実装未着手の領域: 審査レポート作成、企業開示操作、ファイル公開、signed URL。
+        実装未着手の領域: 企業開示操作、ファイル公開、signed URL。
       </p>
     </div>
   );
