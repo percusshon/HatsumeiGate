@@ -1,9 +1,26 @@
 import Link from 'next/link';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
+import {
+  OPERATOR_REVIEW_STATUSES,
+  getOperatorNextStatuses,
+  inventionStatusLabel
+} from '@/lib/invention/status';
+import { updateInventionStatusAction } from './actions';
 
 type RouteParams = {
   id: string;
+};
+
+const STATUS_ERROR_MESSAGES: Record<string, string> = {
+  invention_id_missing: '案件IDが指定されていません。',
+  forbidden: 'この操作にはoperator/admin権限が必要です。',
+  status_required: '遷移先ステータスを選択してください。',
+  not_found: '対象案件が見つかりませんでした。',
+  same_status: '現在と同じステータスへは遷移できません。',
+  invalid_transition: 'その遷移は許可されていません。',
+  update_failed: 'ステータス更新に失敗しました。',
+  status_event_failed: 'ステータスは更新されましたが、イベント記録に失敗しました。'
 };
 
 type InventionDetail = {
@@ -47,9 +64,11 @@ type StatusEvent = {
 };
 
 export default async function OperatorInventionDetailPage({
-  params
+  params,
+  searchParams
 }: {
   params: RouteParams;
+  searchParams?: { error?: string; success?: string };
 }) {
   const currentUser = await getCurrentUser();
 
@@ -72,15 +91,15 @@ export default async function OperatorInventionDetailPage({
       'id, title, problem_summary, solution_summary, target_users, use_case, similar_products, prototype_status, desired_outcome, status, submitted_at'
     )
     .eq('id', params.id)
-    .eq('status', 'submitted')
+    .in('status', OPERATOR_REVIEW_STATUSES)
     .is('deleted_at', null)
     .maybeSingle();
 
   if (inventionError || !invention) {
     return (
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold">提出案件が見つかりません</h2>
-        <p className="text-slate-700">アクセス対象でないID、または提出済みでない案件です。</p>
+        <h2 className="text-2xl font-bold">審査対象案件が見つかりません</h2>
+        <p className="text-slate-700">アクセス対象でないID、または審査フェーズ外の案件です。</p>
         <Link href="/operator/inventions" className="inline-block rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold">
           一覧へ戻る
         </Link>
@@ -121,17 +140,29 @@ export default async function OperatorInventionDetailPage({
     .order('created_at', { ascending: false });
 
   const inventionDetail = invention as InventionDetail;
+  const nextStatuses = getOperatorNextStatuses(inventionDetail.status);
+  const errorMessage = searchParams?.error ? STATUS_ERROR_MESSAGES[searchParams.error] : undefined;
+  const showSuccess = searchParams?.success === 'status_updated';
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">提出案件詳細（Operator）</h2>
+      <h2 className="text-2xl font-bold">審査案件詳細（Operator）</h2>
       <Link href="/operator/inventions" className="inline-block text-sm text-blue-700 hover:underline">
         一覧へ戻る
       </Link>
 
+      {errorMessage ? (
+        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>
+      ) : null}
+      {showSuccess ? (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          ステータスを更新しました。
+        </p>
+      ) : null}
+
       <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
         <h3 className="text-xl font-semibold">{inventionDetail.title ?? 'タイトル未設定'}</h3>
-        <p className="text-sm text-slate-700">ステータス: {inventionDetail.status}</p>
+        <p className="text-sm text-slate-700">ステータス: {inventionStatusLabel(inventionDetail.status)}</p>
         <p className="text-sm text-slate-700">提出時刻: {inventionDetail.submitted_at ? new Date(inventionDetail.submitted_at).toLocaleString('ja-JP') : '未設定'}</p>
         <div className="space-y-2 text-sm text-slate-700">
           <p>対象ユーザー: {inventionDetail.target_users ?? '未入力'}</p>
@@ -176,7 +207,7 @@ export default async function OperatorInventionDetailPage({
             {statusEvents.map((event: StatusEvent) => (
               <li key={event.id} className="rounded border border-slate-100 bg-slate-50 p-2 text-sm text-slate-700">
                 <p>
-                  {event.from_status ?? '未設定'} → {event.to_status ?? '未設定'}
+                  {inventionStatusLabel(event.from_status)} → {inventionStatusLabel(event.to_status)}
                 </p>
                 <p className="text-xs text-slate-500">作成日: {event.created_at ? new Date(event.created_at).toLocaleString('ja-JP') : '未設定'}</p>
                 <p className="text-xs text-slate-500">inventor可視: {event.visible_to_inventor ? 'あり' : 'なし'}</p>
@@ -187,9 +218,68 @@ export default async function OperatorInventionDetailPage({
         )}
       </section>
 
-      <p className="rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-700">
-        このページは表示のみです。編集・審査反映・ステータス更新・開示操作は未実装です。
-      </p>
+      <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-semibold">ステータス更新（内部審査）</h4>
+        {nextStatuses.length === 0 ? (
+          <p className="text-sm text-slate-600">
+            現在のステータスからoperatorが実行できる内部審査遷移はありません。
+          </p>
+        ) : (
+          <form action={updateInventionStatusAction} className="space-y-4">
+            <input type="hidden" name="invention_id" value={inventionDetail.id} />
+
+            <div className="space-y-1">
+              <label htmlFor="to_status" className="block text-sm font-medium text-slate-700">
+                遷移先ステータス
+              </label>
+              <select
+                id="to_status"
+                name="to_status"
+                required
+                defaultValue=""
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="" disabled>
+                  選択してください
+                </option>
+                {nextStatuses.map((status) => (
+                  <option key={status} value={status}>
+                    {inventionStatusLabel(status)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label htmlFor="reason" className="block text-sm font-medium text-slate-700">
+                理由・内部メモ（任意）
+              </label>
+              <textarea
+                id="reason"
+                name="reason"
+                rows={3}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                placeholder="遷移の判断理由など"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" name="visible_to_inventor" />
+              この更新を発明者に表示する
+            </label>
+
+            <button
+              type="submit"
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+            >
+              ステータスを更新
+            </button>
+          </form>
+        )}
+        <p className="text-xs text-slate-500">
+          企業開示・NDA・取引（deal）に関わる遷移は本画面の対象外です。
+        </p>
+      </section>
     </div>
   );
 }
