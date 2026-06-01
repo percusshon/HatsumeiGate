@@ -39,6 +39,13 @@ export default async function OperatorPage() {
         cta="企業アカウントを審査する"
       />
 
+      <SectionCard
+        title="開示申請レビュー"
+        description="企業からの開示申請を審査。発明者同意とNDAを前提に承認レベルを決定します。"
+        href="/operator/disclosures"
+        cta="開示申請をレビューする"
+      />
+
       <div className="rounded-md border border-slate-200 bg-white p-4">
         <p className="text-sm text-slate-700">現在の主なロール: {currentUser.role ?? '未設定'}</p>
         <p className="mt-1 text-sm text-slate-700">補助ロール: {currentUser.roles.join(', ') || 'なし'}</p>
