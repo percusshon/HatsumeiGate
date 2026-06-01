@@ -32,6 +32,13 @@ export default async function OperatorPage() {
         cta="審査対象案件を見る"
       />
 
+      <SectionCard
+        title="企業アカウント審査"
+        description="招待制・審査制の企業アカウントを承認 / 却下 / 停止します。"
+        href="/operator/companies"
+        cta="企業アカウントを審査する"
+      />
+
       <div className="rounded-md border border-slate-200 bg-white p-4">
         <p className="text-sm text-slate-700">現在の主なロール: {currentUser.role ?? '未設定'}</p>
         <p className="mt-1 text-sm text-slate-700">補助ロール: {currentUser.roles.join(', ') || 'なし'}</p>
