@@ -10,6 +10,14 @@ import {
   isDisclosureLevel,
   isDisclosureReviewDecision
 } from '@/lib/company/disclosure';
+import { recordAuditLog } from '@/lib/audit/log';
+import { createNotification } from '@/lib/notifications/notify';
+
+const DISCLOSURE_DECISION_TITLES: Record<string, string> = {
+  approved: '開示申請が承認されました',
+  rejected: '開示申請が却下されました',
+  revoked: '開示申請が取り消されました'
+};
 
 // company_disclosure_requests の審査更新は operator/admin のみ（migration 0014）。
 const OPERATOR_ROLES = ['operator', 'admin'];
@@ -46,7 +54,7 @@ export async function reviewDisclosureRequestAction(formData: FormData) {
 
   const { data: request, error: fetchError } = await supabase
     .from('company_disclosure_requests')
-    .select('id, company_account_id, invention_id, requested_level, approved_level, inventor_approved, status')
+    .select('id, company_account_id, invention_id, requested_by, requested_level, approved_level, inventor_approved, status')
     .eq('id', requestId)
     .is('deleted_at', null)
     .maybeSingle();
@@ -116,6 +124,36 @@ export async function reviewDisclosureRequestAction(formData: FormData) {
 
   if (updateError || !updated) {
     redirect('/operator/disclosures?error=update_failed');
+  }
+
+  await recordAuditLog({
+    eventType: 'admin_action',
+    targetTable: 'company_disclosure_requests',
+    targetId: requestId,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId: request.invention_id,
+    companyAccountId: request.company_account_id,
+    disclosureRequestId: requestId,
+    metadata: {
+      action: 'disclosure_review',
+      decision,
+      approved_level: (updatePayload as { approved_level?: string | null }).approved_level ?? null
+    }
+  });
+
+  // 申請した企業ユーザーへ通知（審査結果）。
+  if (request.requested_by) {
+    await createNotification({
+      recipientUserId: request.requested_by,
+      type: 'disclosure_reviewed',
+      title: DISCLOSURE_DECISION_TITLES[decision] ?? '開示申請の審査結果が更新されました',
+      body: 'Company Portal で詳細を確認してください。',
+      inventionId: request.invention_id,
+      companyAccountId: request.company_account_id,
+      disclosureRequestId: requestId,
+      linkPath: '/company'
+    });
   }
 
   revalidatePath('/operator/disclosures');

@@ -4,6 +4,9 @@ import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { disclosureLevelLabel, disclosureLevelRank, disclosureRequiresNda } from '@/lib/company/disclosure';
 import { buildInventionDisclosureDto, type InventionRecord } from '@/lib/company/disclosure-dto';
+import { recordAuditLog } from '@/lib/audit/log';
+import { isFileDisclosableToCompany } from '@/lib/storage/invention-files';
+import { viewCompanyDisclosureFileAction } from './file-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -120,7 +123,32 @@ export default async function CompanyInventionDisclosurePage({ params }: { param
     user_agent: headerList.get('user-agent')
   });
 
+  // 監査ログにも閲覧イベントを記録（横断的な監査要件）。
+  await recordAuditLog({
+    eventType: 'company_invention_viewed',
+    targetTable: 'inventions',
+    targetId: params.id,
+    actorUserId: currentUser.id,
+    inventionId: params.id,
+    companyAccountId,
+    disclosureRequestId: best.id,
+    userAgent: headerList.get('user-agent'),
+    metadata: { viewed_level: approvedLevel, view_context: 'company_disclosure_view' }
+  });
+
   const fields = buildInventionDisclosureDto(invention as InventionRecord, approvedLevel);
+
+  // 承認レベルで配信可能なファイルのみ抽出（列単位の開示制御のため admin で取得後にフィルタ）。
+  const { data: fileRows } = await admin
+    .from('invention_files')
+    .select('id, original_filename, mime_type, file_visibility, disclosure_level_required')
+    .eq('invention_id', params.id)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+
+  const disclosableFiles = (fileRows ?? []).filter((file) =>
+    isFileDisclosableToCompany(file.file_visibility, file.disclosure_level_required, approvedLevel)
+  );
 
   return (
     <div className="space-y-6">
@@ -140,6 +168,37 @@ export default async function CompanyInventionDisclosurePage({ params }: { param
             <p className="text-sm text-slate-800">{field.value || '（記載なし）'}</p>
           </div>
         ))}
+      </section>
+
+      <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
+        <h3 className="text-lg font-semibold">開示ファイル</h3>
+        {disclosableFiles.length === 0 ? (
+          <p className="text-sm text-slate-600">この開示レベルで閲覧できるファイルはありません。</p>
+        ) : (
+          <ul className="space-y-2">
+            {disclosableFiles.map((file) => (
+              <li
+                key={file.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700"
+              >
+                <div className="space-y-0.5">
+                  <p className="font-medium break-all">{file.original_filename}</p>
+                  <p className="text-xs text-slate-500">{file.mime_type || '種別不明'}</p>
+                </div>
+                <form action={viewCompanyDisclosureFileAction}>
+                  <input type="hidden" name="invention_id" value={params.id} />
+                  <input type="hidden" name="file_id" value={file.id} />
+                  <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-800">
+                    閲覧
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-slate-500">
+          ファイルの閲覧URLは短時間で失効し、閲覧は記録されます。社外共有・第三者転送は禁止です。
+        </p>
       </section>
 
       <p className="text-xs text-slate-500">

@@ -24,7 +24,13 @@ import {
   ipStrategyTypeLabel,
   priorArtRiskLabel
 } from '@/lib/invention/ip-strategy';
-import { updateInventionStatusAction } from './actions';
+import { DISCLOSURE_LEVELS, DISCLOSURE_LEVEL_LABELS, disclosureLevelLabel } from '@/lib/company/disclosure';
+import {
+  setInventionFileDisclosureAction,
+  setInventionTeaserAction,
+  updateInventionStatusAction,
+  viewInventionFileAsOperatorAction
+} from './actions';
 import { createScreeningReportAction } from './screening-actions';
 import { createPriorArtItemAction, createIpStrategyNoteAction } from './notes-actions';
 
@@ -41,6 +47,12 @@ const STATUS_ERROR_MESSAGES: Record<string, string> = {
   invalid_transition: 'その遷移は許可されていません。',
   update_failed: 'ステータス更新に失敗しました。',
   status_event_failed: 'ステータスは更新されましたが、イベント記録に失敗しました。',
+  teaser_status_invalid: 'ティザー公開は内部審査完了（弁理士相談準備完了）の案件のみ可能です。',
+  teaser_update_failed: 'ティザー公開状態の更新に失敗しました。',
+  file_not_found: '対象のファイルが見つかりませんでした。',
+  file_level_invalid: '企業開示レベルの指定が不正です。',
+  file_level_update_failed: 'ファイルの企業開示レベルの更新に失敗しました。',
+  file_url_failed: '閲覧用URLの発行に失敗しました。',
   report_failed: '審査レポートの保存に失敗しました。',
   score_failed: 'レポートは保存されましたが、スコア記録に失敗しました。',
   invalid_score: 'スコアは0〜5の整数で入力してください。',
@@ -55,7 +67,10 @@ const SUCCESS_MESSAGES: Record<string, string> = {
   status_updated: 'ステータスを更新しました。',
   report_created: '審査レポートを保存しました。',
   prior_art_created: '先行技術を保存しました。',
-  ip_strategy_created: '知財方針ノートを保存しました。'
+  ip_strategy_created: '知財方針ノートを保存しました。',
+  teaser_published: '企業向けティザーを公開しました。',
+  teaser_unpublished: '企業向けティザーを非公開にしました。',
+  file_level_updated: 'ファイルの企業開示レベルを更新しました。'
 };
 
 type InventionDetail = {
@@ -69,6 +84,7 @@ type InventionDetail = {
   prototype_status: string | null;
   desired_outcome: string | null;
   status: string;
+  current_disclosure_level: string | null;
   submitted_at: string | null;
 };
 
@@ -135,6 +151,16 @@ type IpStrategyNote = {
   created_at: string | null;
 };
 
+type InventionFile = {
+  id: string;
+  original_filename: string;
+  mime_type: string | null;
+  file_size_bytes: number | null;
+  file_visibility: string;
+  disclosure_level_required: string;
+  created_at: string | null;
+};
+
 export default async function OperatorInventionDetailPage({
   params,
   searchParams
@@ -160,7 +186,7 @@ export default async function OperatorInventionDetailPage({
   const { data: invention, error: inventionError } = await supabase
     .from('inventions')
     .select(
-      'id, title, problem_summary, solution_summary, target_users, use_case, similar_products, prototype_status, desired_outcome, status, submitted_at'
+      'id, title, problem_summary, solution_summary, target_users, use_case, similar_products, prototype_status, desired_outcome, status, current_disclosure_level, submitted_at'
     )
     .eq('id', params.id)
     .in('status', OPERATOR_REVIEW_STATUSES)
@@ -253,6 +279,15 @@ export default async function OperatorInventionDetailPage({
     .order('created_at', { ascending: false });
 
   const ipStrategyNotes = (ipStrategyRows ?? []) as IpStrategyNote[];
+
+  // RLS（invention_files_select_internal）で operator は当該発明のファイルメタを参照できる。
+  const { data: fileRows } = await supabase
+    .from('invention_files')
+    .select('id, original_filename, mime_type, file_size_bytes, file_visibility, disclosure_level_required, created_at')
+    .eq('invention_id', params.id)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+  const inventionFiles = (fileRows ?? []) as InventionFile[];
 
   const inventionDetail = invention as InventionDetail;
   const nextStatuses = getOperatorNextStatuses(inventionDetail.status);
@@ -544,6 +579,97 @@ export default async function OperatorInventionDetailPage({
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-semibold">企業向けティザー公開</h4>
+        <p className="text-sm text-slate-700">
+          現在の開示レベル: {disclosureLevelLabel(inventionDetail.current_disclosure_level)}
+        </p>
+        {inventionDetail.status !== 'attorney_review_ready' ? (
+          <p className="text-sm text-slate-600">
+            ティザー公開は内部審査完了（弁理士相談準備完了）の案件のみ可能です。
+          </p>
+        ) : (
+          <form action={setInventionTeaserAction} className="space-y-3">
+            <input type="hidden" name="invention_id" value={inventionDetail.id} />
+            {inventionDetail.current_disclosure_level === 'level_0_internal_only' ? (
+              <>
+                <input type="hidden" name="publish" value="true" />
+                <p className="text-sm text-slate-700">
+                  公開すると、審査承認済みの企業がティザー（タイトル・課題要約・想定シーン・期待効果）を閲覧できます。発明本文・図面・ファイルは公開されません。
+                </p>
+                <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+                  ティザーを公開する
+                </button>
+              </>
+            ) : (
+              <>
+                <input type="hidden" name="publish" value="false" />
+                <p className="text-sm text-slate-700">この案件は企業向けティザーとして公開中です。</p>
+                <button type="submit" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800">
+                  ティザーを非公開にする
+                </button>
+              </>
+            )}
+          </form>
+        )}
+        <p className="text-xs text-slate-500">
+          ティザー公開は status を変更しません。詳細開示（NDA要約以上）は企業からの開示申請と承認・NDAが必要です。
+        </p>
+      </section>
+
+      <section className="space-y-4 rounded-md border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-semibold">添付ファイルと企業開示レベル</h4>
+        {inventionFiles.length === 0 ? (
+          <p className="text-sm text-slate-600">添付ファイルはありません。</p>
+        ) : (
+          <ul className="space-y-3">
+            {inventionFiles.map((file) => (
+              <li key={file.id} className="space-y-2 rounded border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700">
+                <p className="font-medium break-all">{file.original_filename}</p>
+                <p className="text-xs text-slate-500">
+                  {file.mime_type || '種別不明'} / 現在の企業開示:{' '}
+                  {disclosureLevelLabel(file.disclosure_level_required)}（{file.file_visibility}）
+                </p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <form action={setInventionFileDisclosureAction} className="flex items-end gap-2">
+                    <input type="hidden" name="invention_id" value={inventionDetail.id} />
+                    <input type="hidden" name="file_id" value={file.id} />
+                    <label className="space-y-0.5 text-xs text-slate-600">
+                      <span className="block">企業開示レベル</span>
+                      <select
+                        name="disclosure_level"
+                        required
+                        defaultValue={file.disclosure_level_required}
+                        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                      >
+                        {DISCLOSURE_LEVELS.map((level) => (
+                          <option key={level} value={level}>
+                            {DISCLOSURE_LEVEL_LABELS[level]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-800">
+                      更新
+                    </button>
+                  </form>
+                  <form action={viewInventionFileAsOperatorAction}>
+                    <input type="hidden" name="invention_id" value={inventionDetail.id} />
+                    <input type="hidden" name="file_id" value={file.id} />
+                    <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-800">
+                      閲覧
+                    </button>
+                  </form>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-slate-500">
+          level_2（NDA要約）以上に設定したファイルのみ、NDA成立済みかつ開示承認のある企業に配信されます。level_0/1 は企業へ配信しません。
+        </p>
       </section>
 
       <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">

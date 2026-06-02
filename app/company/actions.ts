@@ -4,7 +4,10 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
+import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { isDisclosureLevel } from '@/lib/company/disclosure';
+import { recordAuditLog } from '@/lib/audit/log';
+import { createNotification } from '@/lib/notifications/notify';
 
 // NDA同意・開示申請の作成は企業メンバーのみ（migration 0015 の insert_by_member に準拠）。
 const COMPANY_ROLES = ['company_user', 'company_admin', 'company_legal_reviewer'];
@@ -49,6 +52,15 @@ export async function acceptNdaAction(formData: FormData) {
     redirect('/company?error=nda_failed');
   }
 
+  await recordAuditLog({
+    eventType: 'nda_accepted',
+    targetTable: 'nda_acceptances',
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    companyAccountId,
+    metadata: { nda_version: ndaVersion }
+  });
+
   revalidatePath('/company');
   redirect('/company?success=nda_accepted');
 }
@@ -85,19 +97,54 @@ export async function createDisclosureRequestAction(formData: FormData) {
 
   const supabase = createServerSupabaseClient();
 
-  const { error } = await supabase.from('company_disclosure_requests').insert({
-    invention_id: inventionId,
-    company_account_id: companyAccountId,
-    requested_by: currentUser.id,
-    requested_level: requestedLevel,
-    status: 'requested',
-    inventor_approved: false,
-    created_by: currentUser.id,
-    updated_by: currentUser.id
+  const { data: inserted, error } = await supabase
+    .from('company_disclosure_requests')
+    .insert({
+      invention_id: inventionId,
+      company_account_id: companyAccountId,
+      requested_by: currentUser.id,
+      requested_level: requestedLevel,
+      status: 'requested',
+      inventor_approved: false,
+      created_by: currentUser.id,
+      updated_by: currentUser.id
+    })
+    .select('id')
+    .single();
+
+  if (error || !inserted) {
+    redirect('/company?error=request_failed');
+  }
+
+  await recordAuditLog({
+    eventType: 'company_disclosure_request',
+    targetTable: 'company_disclosure_requests',
+    targetId: inserted.id,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId,
+    companyAccountId,
+    disclosureRequestId: inserted.id,
+    metadata: { requested_level: requestedLevel }
   });
 
-  if (error) {
-    redirect('/company?error=request_failed');
+  // 発明者へ通知（企業名・申請内容は本文に含めない）。
+  const admin = createAdminSupabaseClient();
+  const { data: inventionOwner } = await admin
+    .from('inventions')
+    .select('inventor_id')
+    .eq('id', inventionId)
+    .maybeSingle();
+  if (inventionOwner?.inventor_id) {
+    await createNotification({
+      recipientUserId: inventionOwner.inventor_id,
+      type: 'disclosure_requested',
+      title: 'あなたの発明に開示申請が届きました',
+      body: '内容を確認し、開示への同意可否をご検討ください。',
+      inventionId,
+      disclosureRequestId: inserted.id,
+      linkPath: `/inventor/inventions/${inventionId}`
+    });
   }
 
   revalidatePath('/company');

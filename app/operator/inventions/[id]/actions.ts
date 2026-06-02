@@ -3,8 +3,16 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { isOperatorTransitionAllowed } from '@/lib/invention/status';
+import { recordAuditLog } from '@/lib/audit/log';
+import { isDisclosureLevel, type DisclosureLevel } from '@/lib/company/disclosure';
+import {
+  INVENTION_FILE_VIEW_TTL_SECONDS,
+  fileVisibilityForLevel
+} from '@/lib/storage/invention-files';
+import { createNotification } from '@/lib/notifications/notify';
 
 const OPERATOR_ROLES = ['operator', 'admin'];
 
@@ -92,6 +100,246 @@ export async function updateInventionStatusAction(formData: FormData) {
     redirect(`${detailPath}?error=status_event_failed`);
   }
 
+  await recordAuditLog({
+    eventType: 'invention_status_changed',
+    targetTable: 'inventions',
+    targetId: inventionId,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId,
+    metadata: { from_status: fromStatus, to_status: toStatus, visible_to_inventor: visibleToInventor }
+  });
+
+  // 発明者可視の更新のみ通知する（内部フェーズは通知しない）。
+  if (visibleToInventor) {
+    const admin = createAdminSupabaseClient();
+    const { data: owner } = await admin
+      .from('inventions')
+      .select('inventor_id')
+      .eq('id', inventionId)
+      .maybeSingle();
+    if (owner?.inventor_id) {
+      await createNotification({
+        recipientUserId: owner.inventor_id,
+        type: 'invention_status_changed',
+        title: '発明の審査状況が更新されました',
+        body: '進捗の詳細はダッシュボードでご確認ください。',
+        inventionId,
+        linkPath: `/inventor/inventions/${inventionId}`
+      });
+    }
+  }
+
   revalidatePath(detailPath);
   redirect(`${detailPath}?success=status_updated`);
+}
+
+// 企業向けティザー公開トグル。
+// 内部審査が完了（attorney_review_ready）した発明に限り、current_disclosure_level を
+// level_1_company_teaser / level_0_internal_only に切り替える。状態機械（status）は変更しない。
+// level_1 はティザー一覧で開示されるが、本文・図面・ファイルは別経路（要承認/NDA）でのみ提供。
+export async function setInventionTeaserAction(formData: FormData) {
+  const readValue = (key: string) => {
+    const value = formData.get(key);
+    return typeof value === 'string' ? value.trim() : null;
+  };
+
+  const inventionId = readValue('invention_id');
+  if (!inventionId) {
+    redirect('/operator/inventions?error=invention_id_missing');
+  }
+
+  const detailPath = `/operator/inventions/${inventionId}`;
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+
+  const isOperator = currentUser.roles.some((role) => OPERATOR_ROLES.includes(role));
+  if (!isOperator) {
+    redirect(`${detailPath}?error=forbidden`);
+  }
+
+  const publish = readValue('publish') === 'true';
+  const nextLevel = publish ? 'level_1_company_teaser' : 'level_0_internal_only';
+  const nextVisibility = publish ? 'teaser' : 'internal';
+
+  const supabase = createServerSupabaseClient();
+
+  const { data: invention, error: fetchError } = await supabase
+    .from('inventions')
+    .select('id, status')
+    .eq('id', inventionId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (fetchError || !invention) {
+    redirect(`${detailPath}?error=not_found`);
+  }
+
+  // 内部審査完了フェーズに限りティザー公開を許可する（保守的ゲート）。
+  if (invention.status !== 'attorney_review_ready') {
+    redirect(`${detailPath}?error=teaser_status_invalid`);
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from('inventions')
+    .update({
+      current_disclosure_level: nextLevel,
+      visibility_level: nextVisibility,
+      updated_by: currentUser.id
+    })
+    .eq('id', inventionId)
+    .is('deleted_at', null)
+    .select('id')
+    .single();
+
+  if (updateError || !updated) {
+    redirect(`${detailPath}?error=teaser_update_failed`);
+  }
+
+  await recordAuditLog({
+    eventType: 'invention_update',
+    targetTable: 'inventions',
+    targetId: inventionId,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId,
+    metadata: { action: publish ? 'teaser_published' : 'teaser_unpublished', disclosure_level: nextLevel }
+  });
+
+  revalidatePath(detailPath);
+  revalidatePath('/company/discovery');
+  redirect(`${detailPath}?success=${publish ? 'teaser_published' : 'teaser_unpublished'}`);
+}
+
+// operator がファイルの企業開示レベルを設定する。
+// disclosure_level_required と file_visibility を単一値から整合的に導出して設定する。
+// invention_files への書き込みは service_role 経由（operator は select のみの RLS）。
+export async function setInventionFileDisclosureAction(formData: FormData) {
+  const readValue = (key: string) => {
+    const value = formData.get(key);
+    return typeof value === 'string' ? value.trim() : null;
+  };
+
+  const inventionId = readValue('invention_id');
+  if (!inventionId) {
+    redirect('/operator/inventions?error=invention_id_missing');
+  }
+  const detailPath = `/operator/inventions/${inventionId}`;
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+  if (!currentUser.roles.some((role) => OPERATOR_ROLES.includes(role))) {
+    redirect(`${detailPath}?error=forbidden`);
+  }
+
+  const fileId = readValue('file_id');
+  if (!fileId) {
+    redirect(`${detailPath}?error=file_not_found`);
+  }
+
+  const level = readValue('disclosure_level');
+  if (!level || !isDisclosureLevel(level)) {
+    redirect(`${detailPath}?error=file_level_invalid`);
+  }
+
+  const admin = createAdminSupabaseClient();
+
+  // 対象ファイルが当該発明に属することを確認（取り違え防止）。
+  const { data: fileRow } = await admin
+    .from('invention_files')
+    .select('id, invention_id')
+    .eq('id', fileId)
+    .eq('invention_id', inventionId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (!fileRow) {
+    redirect(`${detailPath}?error=file_not_found`);
+  }
+
+  const { error: updateError } = await admin
+    .from('invention_files')
+    .update({
+      disclosure_level_required: level,
+      file_visibility: fileVisibilityForLevel(level as DisclosureLevel)
+    })
+    .eq('id', fileId)
+    .is('deleted_at', null);
+
+  if (updateError) {
+    redirect(`${detailPath}?error=file_level_update_failed`);
+  }
+
+  await recordAuditLog({
+    eventType: 'admin_action',
+    targetTable: 'invention_files',
+    targetId: fileId,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId,
+    metadata: { action: 'file_disclosure_set', disclosure_level_required: level }
+  });
+
+  revalidatePath(detailPath);
+  redirect(`${detailPath}?success=file_level_updated`);
+}
+
+// operator が審査目的でファイルを短期 signed URL で閲覧する。
+export async function viewInventionFileAsOperatorAction(formData: FormData) {
+  const readValue = (key: string) => {
+    const value = formData.get(key);
+    return typeof value === 'string' ? value.trim() : null;
+  };
+
+  const inventionId = readValue('invention_id');
+  const fileId = readValue('file_id');
+  const detailPath = inventionId ? `/operator/inventions/${inventionId}` : '/operator/inventions';
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+  if (!currentUser.roles.some((role) => OPERATOR_ROLES.includes(role))) {
+    redirect(`${detailPath}?error=forbidden`);
+  }
+  if (!fileId) {
+    redirect(`${detailPath}?error=file_not_found`);
+  }
+
+  const admin = createAdminSupabaseClient();
+  const { data: fileRow } = await admin
+    .from('invention_files')
+    .select('id, invention_id, storage_bucket, storage_path')
+    .eq('id', fileId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (!fileRow) {
+    redirect(`${detailPath}?error=file_not_found`);
+  }
+
+  const { data: signed, error: signError } = await admin.storage
+    .from(fileRow.storage_bucket)
+    .createSignedUrl(fileRow.storage_path, INVENTION_FILE_VIEW_TTL_SECONDS);
+
+  if (signError || !signed?.signedUrl) {
+    redirect(`${detailPath}?error=file_url_failed`);
+  }
+
+  await recordAuditLog({
+    eventType: 'file_viewed',
+    targetTable: 'invention_files',
+    targetId: fileRow.id,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId: fileRow.invention_id,
+    metadata: { context: 'operator_review_view' }
+  });
+
+  redirect(signed.signedUrl);
 }

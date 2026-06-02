@@ -3,11 +3,14 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import {
   DEAL_STATUS_LABELS,
+  DEAL_TYPES,
+  DEAL_TYPE_LABELS,
   dealStatusLabel,
   dealTypeLabel,
   getOperatorDealNextStatuses
 } from '@/lib/deal/status';
-import { updateDealStatusAction } from './actions';
+import { disclosureLevelLabel } from '@/lib/company/disclosure';
+import { createDealAction, updateDealStatusAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,11 +18,19 @@ type Deal = {
   id: string;
   invention_id: string;
   company_account_id: string;
+  disclosure_request_id: string | null;
   deal_type: string;
   status: string;
   proposed_terms_summary: string | null;
   internal_note: string | null;
   created_at: string | null;
+};
+
+type ApprovedRequest = {
+  id: string;
+  invention_id: string;
+  company_account_id: string;
+  approved_level: string | null;
 };
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -30,7 +41,17 @@ const ERROR_MESSAGES: Record<string, string> = {
   same_status: '現在と同じステータスへは遷移できません。',
   invalid_transition: 'その遷移は許可されていません。',
   update_failed: '取引ステータスの更新に失敗しました。',
-  status_event_failed: 'ステータスは更新されましたが、イベント記録に失敗しました。'
+  status_event_failed: 'ステータスは更新されましたが、イベント記録に失敗しました。',
+  disclosure_request_invalid: '起点となる開示申請の指定が不正です。',
+  deal_type_invalid: '取引種別の指定が不正です。',
+  disclosure_request_not_approved: '承認済みの開示申請のみ取引の起点にできます。',
+  deal_already_exists: 'この開示申請からは既に取引が作成されています。',
+  create_failed: '取引の新規作成に失敗しました。'
+};
+
+const SUCCESS_MESSAGES: Record<string, string> = {
+  deal_updated: '取引ステータスを更新しました。',
+  deal_created: '取引を新規作成しました。'
 };
 
 export default async function OperatorDealsPage({
@@ -55,7 +76,7 @@ export default async function OperatorDealsPage({
   const supabase = createServerSupabaseClient();
   const { data: dealRows, error } = await supabase
     .from('deal_pipeline')
-    .select('id, invention_id, company_account_id, deal_type, status, proposed_terms_summary, internal_note, created_at')
+    .select('id, invention_id, company_account_id, disclosure_request_id, deal_type, status, proposed_terms_summary, internal_note, created_at')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
@@ -70,18 +91,35 @@ export default async function OperatorDealsPage({
 
   const deals = (dealRows ?? []) as Deal[];
 
+  // 承認済みの開示申請のうち、まだ deal 化されていないものを取引作成の起点候補にする。
+  const { data: approvedRequestRows } = await supabase
+    .from('company_disclosure_requests')
+    .select('id, invention_id, company_account_id, approved_level')
+    .eq('status', 'approved')
+    .is('deleted_at', null)
+    .order('reviewed_at', { ascending: false });
+
+  const approvedRequests = (approvedRequestRows ?? []) as ApprovedRequest[];
+  const dealRequestIds = new Set(deals.map((d) => d.disclosure_request_id).filter((id): id is string => Boolean(id)));
+  const creatableRequests = approvedRequests.filter((r) => !dealRequestIds.has(r.id));
+
   const inventionTitles: Record<string, string | null> = {};
   const companyNames: Record<string, string | null> = {};
 
-  if (deals.length > 0) {
-    const inventionIds = Array.from(new Set(deals.map((d) => d.invention_id)));
-    const companyIds = Array.from(new Set(deals.map((d) => d.company_account_id)));
+  const inventionIds = Array.from(
+    new Set([...deals.map((d) => d.invention_id), ...approvedRequests.map((r) => r.invention_id)])
+  );
+  const companyIds = Array.from(
+    new Set([...deals.map((d) => d.company_account_id), ...approvedRequests.map((r) => r.company_account_id)])
+  );
 
+  if (inventionIds.length > 0) {
     const { data: inventions } = await supabase.from('inventions').select('id, title').in('id', inventionIds);
     for (const inv of inventions ?? []) {
       inventionTitles[inv.id] = inv.title;
     }
-
+  }
+  if (companyIds.length > 0) {
     const { data: companies } = await supabase.from('company_accounts').select('id, company_name').in('id', companyIds);
     for (const company of companies ?? []) {
       companyNames[company.id] = company.company_name;
@@ -89,7 +127,7 @@ export default async function OperatorDealsPage({
   }
 
   const errorMessage = searchParams?.error ? ERROR_MESSAGES[searchParams.error] : undefined;
-  const showSuccess = searchParams?.success === 'deal_updated';
+  const successMessage = searchParams?.success ? SUCCESS_MESSAGES[searchParams.success] : undefined;
 
   return (
     <div className="space-y-6">
@@ -101,13 +139,86 @@ export default async function OperatorDealsPage({
       {errorMessage ? (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>
       ) : null}
-      {showSuccess ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">取引ステータスを更新しました。</p>
+      {successMessage ? (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{successMessage}</p>
       ) : null}
 
       <p className="text-slate-700">
-        運営が担う取引遷移のみを操作できます。会社・発明者起点の遷移、取引の新規作成は本画面の対象外です。
+        運営が担う取引の新規作成と遷移を操作できます。取引は承認済みの開示申請を起点に作成します。
       </p>
+
+      <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
+        <h3 className="text-lg font-semibold">取引を新規作成</h3>
+        {creatableRequests.length === 0 ? (
+          <p className="text-sm text-slate-600">
+            取引の起点にできる承認済み開示申請（未取引化）はありません。
+          </p>
+        ) : (
+          <form action={createDealAction} className="space-y-3">
+            <div className="space-y-1">
+              <label htmlFor="disclosure_request_id" className="block text-sm font-medium text-slate-700">
+                起点となる開示申請（承認済み）
+              </label>
+              <select
+                id="disclosure_request_id"
+                name="disclosure_request_id"
+                required
+                defaultValue=""
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="" disabled>
+                  選択してください
+                </option>
+                {creatableRequests.map((request) => (
+                  <option key={request.id} value={request.id}>
+                    {inventionTitles[request.invention_id] ?? '発明タイトル不明'} ×{' '}
+                    {companyNames[request.company_account_id] ?? '企業名不明'}（{disclosureLevelLabel(request.approved_level)}）
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="deal_type" className="block text-sm font-medium text-slate-700">
+                取引種別
+              </label>
+              <select
+                id="deal_type"
+                name="deal_type"
+                required
+                defaultValue=""
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="" disabled>
+                  選択してください
+                </option>
+                {DEAL_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {DEAL_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <textarea
+              name="proposed_terms_summary"
+              rows={2}
+              placeholder="提示条件サマリ（任意）"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+            <textarea
+              name="internal_note"
+              rows={2}
+              placeholder="内部メモ（任意）"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+              取引を作成（初期ステータス: 関心あり）
+            </button>
+          </form>
+        )}
+        <p className="text-xs text-slate-500">
+          初期ステータスは「関心あり」で作成されます。以降の遷移は各取引のフォームから行います。
+        </p>
+      </section>
 
       {deals.length === 0 ? (
         <p className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-700">対象の取引はありません。</p>

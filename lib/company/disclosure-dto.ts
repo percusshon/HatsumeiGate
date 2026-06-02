@@ -46,3 +46,19 @@ export function buildInventionDisclosureDto(
     value: invention[field.key]
   }));
 }
+
+// level_1 (企業ティザー) で開示してよいフィールドのキー一覧。
+// discovery 一覧では、高位レベルの列をそもそも取得しないために用いる。
+export const TEASER_FIELD_KEYS: Array<keyof InventionRecord> = FIELD_MIN_RANK.filter(
+  (field) => field.minRank <= 1
+).map((field) => field.key);
+
+export type InventionTeaserRecord = Pick<InventionRecord, (typeof TEASER_FIELD_KEYS)[number]>;
+
+// teaser 一覧用 DTO。レベルに依らず常に level_1 のフィールドだけを返す（過剰開示防止）。
+export function buildInventionTeaserFields(invention: InventionTeaserRecord): DisclosureField[] {
+  return FIELD_MIN_RANK.filter((field) => field.minRank <= 1).map((field) => ({
+    label: field.label,
+    value: (invention as InventionRecord)[field.key]
+  }));
+}

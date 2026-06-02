@@ -2,7 +2,7 @@
 // Source of truth: docs/deal-pipeline-state-machine.md / migration 0001 (deal_status, deal_type)
 //
 // 本モジュールは operator が担う遷移のみを扱う（company / inventor 起点の遷移は対象外）。
-// deal レコードの新規作成は現RLSに insert ポリシーが無いため対象外。
+// deal レコードの新規作成は migration 0019 で operator/admin に insert を許可した。
 
 export type DealStatus =
   | 'no_interest'
@@ -45,6 +45,15 @@ export type DealType =
   | 'proof_of_concept'
   | 'option';
 
+export const DEAL_TYPES: DealType[] = [
+  'complete_transfer',
+  'exclusive_license',
+  'non_exclusive_license',
+  'joint_development',
+  'proof_of_concept',
+  'option'
+];
+
 export const DEAL_TYPE_LABELS: Record<DealType, string> = {
   complete_transfer: '完全譲渡',
   exclusive_license: '独占ライセンス',
@@ -69,6 +78,10 @@ export const OPERATOR_DEAL_TRANSITIONS: Partial<Record<DealStatus, DealStatus[]>
   joint_development: ['closed'],
   declined: ['closed']
 };
+
+export function isDealType(value: string): value is DealType {
+  return (DEAL_TYPES as string[]).includes(value);
+}
 
 export function dealStatusLabel(value: string | null | undefined): string {
   if (!value) {

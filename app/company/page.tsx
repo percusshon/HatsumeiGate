@@ -116,7 +116,12 @@ export default async function CompanyPage({
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Company Portal</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">Company Portal</h2>
+        <Link href="/company/discovery" className="text-sm text-blue-700 hover:underline">
+          発明ティザー一覧へ
+        </Link>
+      </div>
       <p className="text-slate-700">
         NDA前提のため、発明の詳細はこの画面に表示しません。自社のアカウント、NDA、開示申請の状況のみを確認できます。
       </p>

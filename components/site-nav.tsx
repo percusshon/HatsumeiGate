@@ -6,6 +6,7 @@ const links = [
   { href: '/inventor', label: 'Inventor' },
   { href: '/operator', label: 'Operator' },
   { href: '/company', label: 'Company' },
+  { href: '/notifications', label: 'Notifications' },
   { href: '/partner', label: 'Partner' },
   { href: '/admin', label: 'Admin' },
   { href: '/logout', label: 'Logout' }
