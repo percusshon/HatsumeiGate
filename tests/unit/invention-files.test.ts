@@ -3,7 +3,11 @@ import {
   isFileDisclosableToCompany,
   fileVisibilityForLevel,
   sanitizeFilename,
-  buildInventionFileStoragePath
+  buildInventionFileStoragePath,
+  firstExceededFileDownloadLimit,
+  COMPANY_FILE_DOWNLOAD_LIMIT_PER_DAY,
+  COMPANY_FILE_DOWNLOAD_LIMIT_PER_MONTH,
+  COMPANY_FILE_DOWNLOAD_LIMIT_PER_INVENTION_PER_DAY
 } from '@/lib/storage/invention-files';
 
 describe('isFileDisclosableToCompany', () => {
@@ -58,5 +62,43 @@ describe('buildInventionFileStoragePath', () => {
     const p = buildInventionFileStoragePath('inv-1', 'uuid-2', 'My File.pdf');
     expect(p.startsWith('inv-1/uuid-2/')).toBe(true);
     expect(p).not.toContain(' ');
+  });
+});
+
+describe('firstExceededFileDownloadLimit', () => {
+  it('全て上限未満なら null', () => {
+    expect(
+      firstExceededFileDownloadLimit({ userDaily: 0, userMonthly: 0, inventionCompanyDaily: 0 })
+    ).toBeNull();
+  });
+
+  it('日次/ユーザー超過を最優先で返す', () => {
+    expect(
+      firstExceededFileDownloadLimit({
+        userDaily: COMPANY_FILE_DOWNLOAD_LIMIT_PER_DAY,
+        userMonthly: 0,
+        inventionCompanyDaily: 0
+      })
+    ).toBe('user_daily');
+  });
+
+  it('日次が未超過でも月次超過を検出する', () => {
+    expect(
+      firstExceededFileDownloadLimit({
+        userDaily: 1,
+        userMonthly: COMPANY_FILE_DOWNLOAD_LIMIT_PER_MONTH,
+        inventionCompanyDaily: 0
+      })
+    ).toBe('user_monthly');
+  });
+
+  it('案件単位（発明×企業）の日次超過を検出する', () => {
+    expect(
+      firstExceededFileDownloadLimit({
+        userDaily: 1,
+        userMonthly: 1,
+        inventionCompanyDaily: COMPANY_FILE_DOWNLOAD_LIMIT_PER_INVENTION_PER_DAY
+      })
+    ).toBe('invention_daily');
   });
 });

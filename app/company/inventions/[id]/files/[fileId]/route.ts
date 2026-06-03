@@ -4,7 +4,7 @@ import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { recordAuditLog } from '@/lib/audit/log';
 import { disclosureLevelRank, disclosureRequiresNda, isDisclosureApprovalActive } from '@/lib/company/disclosure';
 import {
-  COMPANY_FILE_DOWNLOAD_LIMIT_PER_DAY,
+  firstExceededFileDownloadLimit,
   INVENTION_FILE_VIEW_TTL_SECONDS,
   isFileDisclosableToCompany
 } from '@/lib/storage/invention-files';
@@ -107,15 +107,28 @@ export async function GET(request: NextRequest, { params }: { params: RouteParam
     return NextResponse.redirect(detailUrl('file_forbidden'));
   }
 
-  // 5) DL回数上限（直近24時間・ユーザー単位、doc §7）。
-  const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { count: recentDownloads } = await admin
-    .from('company_invention_views')
-    .select('id', { count: 'exact', head: true })
-    .eq('viewed_by', currentUser.id)
-    .eq('view_context', 'company_disclosure_file')
-    .gte('created_at', sinceIso);
-  if ((recentDownloads ?? 0) >= COMPANY_FILE_DOWNLOAD_LIMIT_PER_DAY) {
+  // 5) DL回数上限（doc §7 同日/ユーザー、doc §10 月次/ユーザー・案件単位）。
+  const dayAgoIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const monthAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const fileViews = () =>
+    admin
+      .from('company_invention_views')
+      .select('id', { count: 'exact', head: true })
+      .eq('view_context', 'company_disclosure_file');
+  const [userDailyRes, userMonthlyRes, inventionDailyRes] = await Promise.all([
+    fileViews().eq('viewed_by', currentUser.id).gte('created_at', dayAgoIso),
+    fileViews().eq('viewed_by', currentUser.id).gte('created_at', monthAgoIso),
+    fileViews()
+      .eq('invention_id', inventionId)
+      .eq('company_account_id', companyAccountId)
+      .gte('created_at', dayAgoIso)
+  ]);
+  const exceeded = firstExceededFileDownloadLimit({
+    userDaily: userDailyRes.count ?? 0,
+    userMonthly: userMonthlyRes.count ?? 0,
+    inventionCompanyDaily: inventionDailyRes.count ?? 0
+  });
+  if (exceeded) {
     return NextResponse.redirect(detailUrl('file_download_limit'));
   }
 
