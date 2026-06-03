@@ -64,7 +64,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   deal_transition_invalid: 'その取引遷移は許可されていません。',
   deal_transition_failed: '取引状況の更新に失敗しました。',
   nda_invalid: 'NDAの指定が不正です。',
-  nda_revoke_failed: 'NDAの失効に失敗しました。'
+  nda_revoke_failed: 'NDAの失効に失敗しました。',
+  nda_role_forbidden: 'NDAの締結・失効は企業管理者または法務レビュアーのみ可能です。'
 };
 
 const SUCCESS_MESSAGES: Record<string, string> = {
@@ -136,6 +137,7 @@ export default async function CompanyPage({
   const deals = (dealRows ?? []) as CompanyDeal[];
 
   const nowIso = new Date().toISOString();
+  const canManageNda = currentUser.roles.some((role) => ['company_admin', 'company_legal_reviewer'].includes(role));
   const errorMessage = searchParams?.error ? ERROR_MESSAGES[searchParams.error] : undefined;
   const successMessage = searchParams?.success ? SUCCESS_MESSAGES[searchParams.success] : undefined;
 
@@ -189,7 +191,7 @@ export default async function CompanyPage({
                             {nda.nda_version} / 同意: {nda.accepted_at ? new Date(nda.accepted_at).toLocaleString('ja-JP') : '不明'} /{' '}
                             {nda.revoked_at ? '取消済み' : ndaIsActive(nda, nowIso) ? '有効' : '期限切れ'}
                           </span>
-                          {!nda.revoked_at && ndaIsActive(nda, nowIso) ? (
+                          {canManageNda && !nda.revoked_at && ndaIsActive(nda, nowIso) ? (
                             <form action={revokeNdaAction}>
                               <input type="hidden" name="nda_id" value={nda.id} />
                               <button type="submit" className="rounded border border-red-200 px-2 py-0.5 text-xs font-semibold text-red-700 hover:bg-red-50">
@@ -231,25 +233,31 @@ export default async function CompanyPage({
                   )}
                 </div>
 
-                <form action={acceptNdaAction} className="space-y-3 border-t border-slate-200 pt-3">
-                  <input type="hidden" name="company_account_id" value={company.id} />
-                  <div className="space-y-1">
-                    <label htmlFor={`nda_version_${company.id}`} className="block text-sm font-medium text-slate-700">
-                      NDAに同意する（バージョン）
-                    </label>
-                    <input
-                      id={`nda_version_${company.id}`}
-                      name="nda_version"
-                      type="text"
-                      required
-                      defaultValue={DEFAULT_NDA_VERSION}
-                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
-                    NDAに同意する
-                  </button>
-                </form>
+                {canManageNda ? (
+                  <form action={acceptNdaAction} className="space-y-3 border-t border-slate-200 pt-3">
+                    <input type="hidden" name="company_account_id" value={company.id} />
+                    <div className="space-y-1">
+                      <label htmlFor={`nda_version_${company.id}`} className="block text-sm font-medium text-slate-700">
+                        NDAに同意する（バージョン）
+                      </label>
+                      <input
+                        id={`nda_version_${company.id}`}
+                        name="nda_version"
+                        type="text"
+                        required
+                        defaultValue={DEFAULT_NDA_VERSION}
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+                      NDAに同意する
+                    </button>
+                  </form>
+                ) : (
+                  <p className="border-t border-slate-200 pt-3 text-xs text-slate-500">
+                    NDAの締結・失効は企業管理者または法務レビュアーのみ可能です。
+                  </p>
+                )}
 
                 <form action={createDisclosureRequestAction} className="space-y-3 border-t border-slate-200 pt-3">
                   <input type="hidden" name="company_account_id" value={company.id} />

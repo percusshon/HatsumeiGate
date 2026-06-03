@@ -7,6 +7,7 @@ import { buildInventionDisclosureDto, type InventionRecord } from '@/lib/company
 import { recordAuditLog } from '@/lib/audit/log';
 import { isFileDisclosableToCompany } from '@/lib/storage/invention-files';
 import { getClientIp } from '@/lib/http/client-ip';
+import { dealStatusLabel, dealTypeLabel } from '@/lib/deal/status';
 import { viewCompanyDisclosureFileAction } from './file-actions';
 
 export const dynamic = 'force-dynamic';
@@ -154,6 +155,20 @@ export default async function CompanyInventionDisclosurePage({ params }: { param
     isFileDisclosableToCompany(file.file_visibility, file.disclosure_level_required, approvedLevel)
   );
 
+  // level_4（交渉パッケージ）のとき、自社の deal 情報（種別/状態/提示条件）を開示する。
+  let level4Deal: { deal_type: string; status: string; proposed_terms_summary: string | null } | null = null;
+  if (disclosureLevelRank(approvedLevel) >= 4) {
+    const { data: dealRow } = await admin
+      .from('deal_pipeline')
+      .select('deal_type, status, proposed_terms_summary')
+      .eq('invention_id', params.id)
+      .eq('company_account_id', companyAccountId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .maybeSingle();
+    level4Deal = dealRow ?? null;
+  }
+
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">開示情報（{disclosureLevelLabel(approvedLevel)}）</h2>
@@ -173,6 +188,16 @@ export default async function CompanyInventionDisclosurePage({ params }: { param
           </div>
         ))}
       </section>
+
+      {level4Deal ? (
+        <section className="space-y-2 rounded-md border border-slate-200 bg-white p-5">
+          <h3 className="text-lg font-semibold">取引情報（交渉パッケージ）</h3>
+          <p className="text-sm text-slate-700">取引種別: {dealTypeLabel(level4Deal.deal_type)}</p>
+          <p className="text-sm text-slate-700">状態: {dealStatusLabel(level4Deal.status)}</p>
+          <p className="text-sm text-slate-700">提示条件: {level4Deal.proposed_terms_summary || '未入力'}</p>
+          <p className="text-xs text-slate-500">本情報は交渉用の秘密情報です。社外共有は禁止です。閲覧は記録されています。</p>
+        </section>
+      ) : null}
 
       <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
         <h3 className="text-lg font-semibold">開示ファイル</h3>

@@ -6,7 +6,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { isDealType, isOperatorDealTransitionAllowed } from '@/lib/deal/status';
-import { isRevenueEventType } from '@/lib/revenue/events';
+import { DEFAULT_PLATFORM_FEE_RATE, computeFeeSplit, isRevenueEventType } from '@/lib/revenue/events';
 import { recordAuditLog } from '@/lib/audit/log';
 import { createNotification, createNotifications, getCompanyMemberUserIds, type NotificationInput } from '@/lib/notifications/notify';
 
@@ -306,6 +306,17 @@ export async function recordRevenueEventAction(formData: FormData) {
   const currency = readValue('currency') || 'JPY';
   const occurredAt = readValue('occurred_at');
 
+  // 手数料・発明者取り分が未入力で金額があるときは、既定手数料率(20%)で自動按分する。
+  let platformFeeRate: number | null = null;
+  let finalPlatformFee = platformFeeAmount;
+  let finalInventorAmount = inventorAmount;
+  if (amount !== null && platformFeeAmount === null && inventorAmount === null) {
+    const split = computeFeeSplit(amount, DEFAULT_PLATFORM_FEE_RATE);
+    finalPlatformFee = split.platformFeeAmount;
+    finalInventorAmount = split.inventorAmount;
+    platformFeeRate = split.rate;
+  }
+
   const supabase = createServerSupabaseClient();
 
   // deal から invention/company を引き継ぐ（入力の取り違え防止）。
@@ -329,8 +340,9 @@ export async function recordRevenueEventAction(formData: FormData) {
       event_type: eventType,
       amount,
       currency,
-      platform_fee_amount: platformFeeAmount,
-      inventor_amount: inventorAmount,
+      platform_fee_rate: platformFeeRate,
+      platform_fee_amount: finalPlatformFee,
+      inventor_amount: finalInventorAmount,
       occurred_at: occurredAt ? new Date(occurredAt).toISOString() : new Date().toISOString(),
       created_by: currentUser.id
     })

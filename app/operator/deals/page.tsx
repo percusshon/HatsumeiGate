@@ -371,6 +371,9 @@ export default async function OperatorDealsPage({
                       収益を記録
                     </button>
                   </form>
+                  <p className="text-xs text-slate-500">
+                    発明者分を空欄にすると、手数料20%で自動按分します（手数料=金額×20%、発明者分=残り）。手入力で上書きも可能です。
+                  </p>
                 </div>
               </li>
             );

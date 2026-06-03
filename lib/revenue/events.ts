@@ -42,6 +42,23 @@ export function isRevenueEventType(value: string): value is RevenueEventType {
   return (REVENUE_EVENT_TYPES as string[]).includes(value);
 }
 
+// プラットフォーム手数料率（成功報酬/ロイヤリティ等）。
+// 金額のみ入力された場合に手数料・発明者取り分を自動算出する既定値。operator は上書き可。
+export const DEFAULT_PLATFORM_FEE_RATE = 0.2;
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+// amount から手数料率で按分する。手数料=amount×rate、発明者取り分=amount−手数料。
+export function computeFeeSplit(
+  amount: number,
+  rate: number = DEFAULT_PLATFORM_FEE_RATE
+): { platformFeeAmount: number; inventorAmount: number; rate: number } {
+  const platformFeeAmount = round2(amount * rate);
+  return { platformFeeAmount, inventorAmount: round2(amount - platformFeeAmount), rate };
+}
+
 export function revenueEventTypeLabel(value: string | null | undefined): string {
   if (!value) {
     return '未設定';

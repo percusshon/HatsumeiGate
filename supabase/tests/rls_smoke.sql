@@ -199,19 +199,33 @@ exception when others then
 end $$;
 rollback;
 
--- 9) company_revoke_nda: member allowed, non-member denied.
+-- 9) company_revoke_nda: company_admin allowed, company_user denied (migration 0028).
 begin;
 insert into public.nda_acceptances (id, company_account_id, user_id, accepted_by, nda_version, accepted_at)
-values ('eeeeeeee-0000-0000-0000-eeeeeeee00aa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','66666666-6666-6666-6666-666666666666','66666666-6666-6666-6666-666666666666','v1', now());
+values ('eeeeeeee-0000-0000-0000-eeeeeeee00aa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','77777777-7777-7777-7777-777777777777','77777777-7777-7777-7777-777777777777','v1', now());
 set local role authenticated;
-set local request.jwt.claims to '{"sub":"66666666-6666-6666-6666-666666666666","role":"authenticated"}';
+set local request.jwt.claims to '{"sub":"77777777-7777-7777-7777-777777777777","role":"authenticated"}';
 select public.company_revoke_nda('eeeeeeee-0000-0000-0000-eeeeeeee00aa');
 reset role;
 do $$
 declare r timestamptz;
 begin
   select revoked_at into r from public.nda_acceptances where id='eeeeeeee-0000-0000-0000-eeeeeeee00aa';
-  if r is null then raise exception 'ASSERT FAILED: NDA should be revoked by member'; end if;
+  if r is null then raise exception 'ASSERT FAILED: NDA should be revoked by company_admin'; end if;
+end $$;
+rollback;
+
+begin;
+insert into public.nda_acceptances (id, company_account_id, user_id, accepted_by, nda_version, accepted_at)
+values ('eeeeeeee-0000-0000-0000-eeeeeeee00bb','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','66666666-6666-6666-6666-666666666666','66666666-6666-6666-6666-666666666666','v1', now());
+set local role authenticated;
+set local request.jwt.claims to '{"sub":"66666666-6666-6666-6666-666666666666","role":"authenticated"}';
+do $$
+begin
+  perform public.company_revoke_nda('eeeeeeee-0000-0000-0000-eeeeeeee00bb');
+  raise exception 'ASSERT FAILED: company_user must not revoke NDA';
+exception when others then
+  if sqlerrm like 'ASSERT FAILED%' then raise; end if;
 end $$;
 rollback;
 

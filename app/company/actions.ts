@@ -12,6 +12,8 @@ import { createNotification } from '@/lib/notifications/notify';
 
 // NDA同意・開示申請の作成は企業メンバーのみ（migration 0015 の insert_by_member に準拠）。
 const COMPANY_ROLES = ['company_user', 'company_admin', 'company_legal_reviewer'];
+// NDA の締結/失効は company_admin / company_legal_reviewer に限定する。
+const NDA_ROLES = ['company_admin', 'company_legal_reviewer'];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -33,6 +35,10 @@ export async function acceptNdaAction(formData: FormData) {
 
   if (!currentUser.roles.some((role) => COMPANY_ROLES.includes(role))) {
     redirect('/company?error=forbidden');
+  }
+
+  if (!currentUser.roles.some((role) => NDA_ROLES.includes(role))) {
+    redirect('/company?error=nda_role_forbidden');
   }
 
   const ndaVersion = readValue('nda_version');
@@ -74,8 +80,8 @@ export async function revokeNdaAction(formData: FormData) {
   if (!currentUser) {
     redirect('/login');
   }
-  if (!currentUser.roles.some((role) => COMPANY_ROLES.includes(role))) {
-    redirect('/company?error=forbidden');
+  if (!currentUser.roles.some((role) => NDA_ROLES.includes(role))) {
+    redirect('/company?error=nda_role_forbidden');
   }
   if (!ndaId || !UUID_RE.test(ndaId)) {
     redirect('/company?error=nda_invalid');

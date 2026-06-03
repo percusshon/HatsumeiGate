@@ -81,6 +81,14 @@ export default async function OperatorDisclosuresPage({
 
   const requests = (requestRows ?? []) as DisclosureRequest[];
 
+  // 競合同時開示の警告用: 発明ごとに NDA レベル(level_2以上)で承認済みの企業集合を作る。
+  const approvedCompaniesByInvention: Record<string, Set<string>> = {};
+  for (const r of requests) {
+    if (r.status === 'approved' && disclosureLevelRank(r.approved_level) >= 2) {
+      (approvedCompaniesByInvention[r.invention_id] ??= new Set()).add(r.company_account_id);
+    }
+  }
+
   const inventionTitles: Record<string, string | null> = {};
   const companyNames: Record<string, string | null> = {};
   const activeNdaByCompany: Record<string, boolean> = {};
@@ -150,8 +158,17 @@ export default async function OperatorDisclosuresPage({
             const approvableLevels = DISCLOSURE_APPROVABLE_LEVELS.filter(
               (level) => disclosureLevelRank(level) <= disclosureLevelRank(request.requested_level)
             );
+            // 同一発明に対し、他社が NDA レベルで承認済みかどうか（競合警告）。
+            const otherApprovedCompanies = Array.from(
+              approvedCompaniesByInvention[request.invention_id] ?? new Set<string>()
+            ).filter((cid) => cid !== request.company_account_id);
             return (
               <li key={request.id} className="space-y-3 rounded-md border border-slate-200 bg-white p-4">
+                {otherApprovedCompanies.length > 0 ? (
+                  <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                    競合注意: この発明は既に他の{otherApprovedCompanies.length}社にNDAレベルの開示が承認されています。同時開示の可否をご確認ください。
+                  </p>
+                ) : null}
                 <div className="space-y-1 text-sm text-slate-700">
                   <h3 className="text-lg font-semibold text-slate-900">
                     {inventionTitles[request.invention_id] ?? '発明タイトル不明'}
