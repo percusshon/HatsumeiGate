@@ -7,6 +7,7 @@ import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { recordAuditLog } from '@/lib/audit/log';
 import { disclosureLevelRank, disclosureRequiresNda } from '@/lib/company/disclosure';
 import { INVENTION_FILE_VIEW_TTL_SECONDS, isFileDisclosableToCompany } from '@/lib/storage/invention-files';
+import { getClientIp } from '@/lib/http/client-ip';
 
 // 企業がNDA成立・開示承認済みのファイルを短期 signed URL で閲覧する。
 // ページ表示と同等のゲートをサーバー側で再検証してから、閲覧ログ記録 → URL発行する。
@@ -88,6 +89,7 @@ export async function viewCompanyDisclosureFileAction(formData: FormData) {
   }
 
   const headerList = headers();
+  const clientIp = getClientIp(headerList);
 
   // 5) 配信前に閲覧ログを記録（漏洩対策の必須要件）。
   await admin.from('company_invention_views').insert({
@@ -97,7 +99,8 @@ export async function viewCompanyDisclosureFileAction(formData: FormData) {
     disclosure_request_id: best.id,
     viewed_level: approvedLevel,
     view_context: 'company_disclosure_file',
-    user_agent: headerList.get('user-agent')
+    user_agent: headerList.get('user-agent'),
+    ip_address: clientIp
   });
 
   await recordAuditLog({
@@ -109,6 +112,7 @@ export async function viewCompanyDisclosureFileAction(formData: FormData) {
     companyAccountId,
     disclosureRequestId: best.id,
     userAgent: headerList.get('user-agent'),
+    ipAddress: clientIp,
     metadata: { viewed_level: approvedLevel, disclosure_level_required: fileRow.disclosure_level_required }
   });
 

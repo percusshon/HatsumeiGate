@@ -3,8 +3,10 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { recordAuditLog } from '@/lib/audit/log';
+import { createNotification } from '@/lib/notifications/notify';
 
 // 発明者の開示同意は SECURITY DEFINER 関数経由（migration 0018）。
 // 本人確認は関数内で行うため、ここでは認証のみ確認する。
@@ -134,6 +136,27 @@ export async function respondNeedsMoreInfoAction(formData: FormData) {
     inventionId,
     metadata: { action: 'needs_more_info_response' }
   });
+
+  // 追加情報を依頼した operator（最後に needs_more_info へ遷移させた人）へ通知。
+  const admin = createAdminSupabaseClient();
+  const { data: lastNmi } = await admin
+    .from('invention_status_events')
+    .select('changed_by')
+    .eq('invention_id', inventionId)
+    .eq('to_status', 'needs_more_info')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastNmi?.changed_by) {
+    await createNotification({
+      recipientUserId: lastNmi.changed_by,
+      type: 'needs_more_info_response',
+      title: '発明者から追加情報が提出されました',
+      body: '審査を再開できます。案件の詳細をご確認ください。',
+      inventionId,
+      linkPath: `/operator/inventions/${inventionId}`
+    });
+  }
 
   revalidatePath(detailPath);
   redirect(`${detailPath}?success=response_submitted`);

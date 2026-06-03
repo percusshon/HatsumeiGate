@@ -6,6 +6,7 @@ import { disclosureLevelLabel, disclosureLevelRank, disclosureRequiresNda } from
 import { buildInventionDisclosureDto, type InventionRecord } from '@/lib/company/disclosure-dto';
 import { recordAuditLog } from '@/lib/audit/log';
 import { isFileDisclosableToCompany } from '@/lib/storage/invention-files';
+import { getClientIp } from '@/lib/http/client-ip';
 import { viewCompanyDisclosureFileAction } from './file-actions';
 
 export const dynamic = 'force-dynamic';
@@ -113,6 +114,7 @@ export default async function CompanyInventionDisclosurePage({ params }: { param
 
   // 5) 開示前に閲覧ログを記録（append-only / 漏洩対策の必須要件）。
   const headerList = headers();
+  const clientIp = getClientIp(headerList);
   await admin.from('company_invention_views').insert({
     invention_id: params.id,
     company_account_id: companyAccountId,
@@ -120,7 +122,8 @@ export default async function CompanyInventionDisclosurePage({ params }: { param
     disclosure_request_id: best.id,
     viewed_level: approvedLevel,
     view_context: 'company_disclosure_view',
-    user_agent: headerList.get('user-agent')
+    user_agent: headerList.get('user-agent'),
+    ip_address: clientIp
   });
 
   // 監査ログにも閲覧イベントを記録（横断的な監査要件）。
@@ -133,6 +136,7 @@ export default async function CompanyInventionDisclosurePage({ params }: { param
     companyAccountId,
     disclosureRequestId: best.id,
     userAgent: headerList.get('user-agent'),
+    ipAddress: clientIp,
     metadata: { viewed_level: approvedLevel, view_context: 'company_disclosure_view' }
   });
 

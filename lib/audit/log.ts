@@ -40,6 +40,7 @@ export type AuditLogInput = {
   dealId?: string | null;
   disclosureRequestId?: string | null;
   userAgent?: string | null;
+  ipAddress?: string | null;
   // 機密本文は入れない。構造化された文脈のみ。
   metadata?: Record<string, unknown>;
 };
@@ -58,6 +59,7 @@ export async function recordAuditLog(input: AuditLogInput): Promise<void> {
       deal_id: input.dealId ?? null,
       disclosure_request_id: input.disclosureRequestId ?? null,
       user_agent: input.userAgent ?? null,
+      ip_address: input.ipAddress ?? null,
       metadata: input.metadata ?? {}
     });
     if (error) {
