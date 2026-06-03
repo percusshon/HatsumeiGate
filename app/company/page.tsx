@@ -8,7 +8,8 @@ import {
   disclosureLevelLabel,
   disclosureRequestStatusLabel
 } from '@/lib/company/disclosure';
-import { acceptNdaAction, createDisclosureRequestAction } from './actions';
+import { DEAL_STATUS_LABELS, dealStatusLabel, dealTypeLabel, getCompanyDealNextStatuses } from '@/lib/deal/status';
+import { acceptNdaAction, companyAdvanceDealAction, createDisclosureRequestAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,14 @@ type DisclosureRequest = {
   created_at: string | null;
 };
 
+type CompanyDeal = {
+  id: string;
+  company_account_id: string;
+  deal_type: string;
+  status: string;
+  created_at: string | null;
+};
+
 const ERROR_MESSAGES: Record<string, string> = {
   company_id_missing: '企業IDが指定されていません。',
   forbidden: 'この操作には企業メンバー権限が必要です。',
@@ -49,12 +58,16 @@ const ERROR_MESSAGES: Record<string, string> = {
   nda_failed: 'NDA同意の記録に失敗しました。',
   invention_id_invalid: '発明ID（UUID）の形式が不正です。',
   level_invalid: '希望する開示レベルの指定が不正です。',
-  request_failed: '開示申請の作成に失敗しました。'
+  request_failed: '開示申請の作成に失敗しました。',
+  deal_invalid: '取引IDの指定が不正です。',
+  deal_transition_invalid: 'その取引遷移は許可されていません。',
+  deal_transition_failed: '取引状況の更新に失敗しました。'
 };
 
 const SUCCESS_MESSAGES: Record<string, string> = {
   nda_accepted: 'NDA同意を記録しました。',
-  request_created: '開示申請を作成しました。発明者の同意と運営承認をお待ちください。'
+  request_created: '開示申請を作成しました。発明者の同意と運営承認をお待ちください。',
+  deal_updated: '取引状況を更新しました。'
 };
 
 function ndaIsActive(nda: NdaAcceptance, nowIso: string): boolean {
@@ -109,6 +122,14 @@ export default async function CompanyPage({
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
   const requests = (requestRows ?? []) as DisclosureRequest[];
+
+  // RLS（deal_pipeline_select_by_member）により、自社が当事者の取引のみ返る。
+  const { data: dealRows } = await supabase
+    .from('deal_pipeline')
+    .select('id, company_account_id, deal_type, status, created_at')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+  const deals = (dealRows ?? []) as CompanyDeal[];
 
   const nowIso = new Date().toISOString();
   const errorMessage = searchParams?.error ? ERROR_MESSAGES[searchParams.error] : undefined;
@@ -262,6 +283,46 @@ export default async function CompanyPage({
           })}
         </ul>
       )}
+
+      <section className="space-y-3">
+        <h3 className="text-xl font-bold">取引（Deal）</h3>
+        {deals.length === 0 ? (
+          <p className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-700">自社が当事者の取引はありません。</p>
+        ) : (
+          <ul className="space-y-3">
+            {deals.map((deal) => {
+              const nextStatuses = getCompanyDealNextStatuses(deal.status);
+              const company = companies.find((c) => c.id === deal.company_account_id);
+              return (
+                <li key={deal.id} className="space-y-2 rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                  <p className="font-semibold text-slate-900">{company?.company_name ?? '自社'}</p>
+                  <p>取引種別: {dealTypeLabel(deal.deal_type)}</p>
+                  <p>現在の状況: {dealStatusLabel(deal.status)}</p>
+                  {nextStatuses.length === 0 ? (
+                    <p className="text-xs text-slate-500">現在、企業側で実行できる操作はありません（運営対応待ち）。</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {nextStatuses.map((status) => (
+                        <form key={status} action={companyAdvanceDealAction}>
+                          <input type="hidden" name="deal_id" value={deal.id} />
+                          <input type="hidden" name="from_status" value={deal.status} />
+                          <input type="hidden" name="to_status" value={status} />
+                          <button
+                            type="submit"
+                            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                          >
+                            {DEAL_STATUS_LABELS[status]}へ
+                          </button>
+                        </form>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
       <p className="rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-500">
         発明の詳細開示は、NDA・開示承認・閲覧ログを満たした安全な経路（API）で別途提供されます。本画面では発明本文・図面・ファイルは表示しません。

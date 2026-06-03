@@ -1,9 +1,11 @@
 // Invention status helpers (MVP)
 // Source of truth: docs/invention-state-machine.md / docs/invention-status-workflow.md
 //
-// このモジュールは operator による内部審査フェーズの遷移のみを扱う。
-// company_disclosure_ready 以降（企業開示・NDA・deal 系）は開示制御MVP
-// （roadmap Phase 11+）で扱うため、ここでは operator 選択肢に含めない。
+// このモジュールは operator が担うステータス遷移を扱う。
+// 内部審査フェーズに加え、企業開示〜deal フェーズ（company_disclosure_ready 以降）の
+// operator 起点遷移も docs/invention-state-machine.md に従って含める。
+// company/inventor 単独起点の遷移（withdrawn, company_reviewing->negotiating の会社主導 等）は
+// 別のアクター用フロー（RPC/RLS）で扱い、ここには含めない。
 
 export type InventionStatus =
   | 'draft'
@@ -44,8 +46,8 @@ export const INVENTION_STATUS_LABELS: Record<InventionStatus, string> = {
   archived: 'アーカイブ'
 };
 
-// operator が一覧・詳細で扱う内部審査フェーズ。
-// company 開示以降は本MVPの対象外。
+// operator が一覧・詳細で扱う（参照・遷移操作の対象となる）ステータス。
+// 内部審査フェーズに加え、企業開示〜deal フェーズと終了系も含む（draft のみ対象外）。
 export const OPERATOR_REVIEW_STATUSES: InventionStatus[] = [
   'submitted',
   'screening',
@@ -53,20 +55,52 @@ export const OPERATOR_REVIEW_STATUSES: InventionStatus[] = [
   'prior_art_research',
   'ip_strategy_review',
   'prototype_review',
-  'attorney_review_ready'
+  'attorney_review_ready',
+  'company_disclosure_ready',
+  'company_reviewing',
+  'negotiating',
+  'licensed',
+  'assigned',
+  'joint_development',
+  'rejected',
+  'withdrawn'
 ];
 
-// operator が実行できる遷移（内部審査フェーズのみ）。
-// state machine docのうち inventor/company 起点・開示/deal 系遷移は除外。
+// operator が実行できる遷移（docs/invention-state-machine.md の operator 起点遷移）。
+// inventor 単独（withdrawn）・会社単独起点の遷移は別フローで扱うため含めない。
 export const OPERATOR_STATUS_TRANSITIONS: Partial<Record<InventionStatus, InventionStatus[]>> = {
   submitted: ['screening', 'needs_more_info', 'rejected'],
   screening: ['prior_art_research', 'needs_more_info', 'rejected'],
   needs_more_info: ['screening', 'rejected'],
   prior_art_research: ['ip_strategy_review', 'needs_more_info', 'rejected'],
-  ip_strategy_review: ['prototype_review', 'attorney_review_ready', 'needs_more_info', 'rejected'],
+  ip_strategy_review: [
+    'prototype_review',
+    'attorney_review_ready',
+    'company_disclosure_ready',
+    'needs_more_info',
+    'rejected'
+  ],
   prototype_review: ['attorney_review_ready', 'needs_more_info', 'rejected'],
-  attorney_review_ready: ['needs_more_info', 'rejected']
+  attorney_review_ready: ['company_disclosure_ready', 'needs_more_info', 'rejected'],
+  company_disclosure_ready: ['company_reviewing', 'needs_more_info', 'rejected'],
+  company_reviewing: ['negotiating', 'needs_more_info', 'rejected'],
+  negotiating: ['licensed', 'assigned', 'joint_development', 'rejected'],
+  licensed: ['archived'],
+  assigned: ['archived'],
+  joint_development: ['archived'],
+  rejected: ['archived'],
+  withdrawn: ['archived']
 };
+
+// 企業ティザー公開を許可するステータス（内部審査完了〜企業開示準備）。
+export const TEASER_PUBLISHABLE_STATUSES: InventionStatus[] = [
+  'attorney_review_ready',
+  'company_disclosure_ready'
+];
+
+export function isTeaserPublishableStatus(status: string | null | undefined): boolean {
+  return TEASER_PUBLISHABLE_STATUSES.includes(status as InventionStatus);
+}
 
 export function inventionStatusLabel(status: string | null | undefined): string {
   if (!status) {

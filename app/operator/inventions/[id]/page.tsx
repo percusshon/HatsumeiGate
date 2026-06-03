@@ -4,7 +4,8 @@ import { getCurrentUser } from '@/lib/auth/get-current-user';
 import {
   OPERATOR_REVIEW_STATUSES,
   getOperatorNextStatuses,
-  inventionStatusLabel
+  inventionStatusLabel,
+  isTeaserPublishableStatus
 } from '@/lib/invention/status';
 import {
   SCREENING_AXES,
@@ -47,7 +48,7 @@ const STATUS_ERROR_MESSAGES: Record<string, string> = {
   invalid_transition: 'その遷移は許可されていません。',
   update_failed: 'ステータス更新に失敗しました。',
   status_event_failed: 'ステータスは更新されましたが、イベント記録に失敗しました。',
-  teaser_status_invalid: 'ティザー公開は内部審査完了（弁理士相談準備完了）の案件のみ可能です。',
+  teaser_status_invalid: 'ティザー公開は内部審査完了（弁理士相談準備完了）〜企業開示準備完了の案件のみ可能です。',
   teaser_update_failed: 'ティザー公開状態の更新に失敗しました。',
   file_not_found: '対象のファイルが見つかりませんでした。',
   file_level_invalid: '企業開示レベルの指定が不正です。',
@@ -586,9 +587,9 @@ export default async function OperatorInventionDetailPage({
         <p className="text-sm text-slate-700">
           現在の開示レベル: {disclosureLevelLabel(inventionDetail.current_disclosure_level)}
         </p>
-        {inventionDetail.status !== 'attorney_review_ready' ? (
+        {!isTeaserPublishableStatus(inventionDetail.status) ? (
           <p className="text-sm text-slate-600">
-            ティザー公開は内部審査完了（弁理士相談準備完了）の案件のみ可能です。
+            ティザー公開は内部審査完了（弁理士相談準備完了）〜企業開示準備完了の案件のみ可能です。
           </p>
         ) : (
           <form action={setInventionTeaserAction} className="space-y-3">

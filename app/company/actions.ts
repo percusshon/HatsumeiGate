@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { isDisclosureLevel } from '@/lib/company/disclosure';
+import { isCompanyDealTransitionAllowed } from '@/lib/deal/status';
 import { recordAuditLog } from '@/lib/audit/log';
 import { createNotification } from '@/lib/notifications/notify';
 
@@ -149,4 +150,85 @@ export async function createDisclosureRequestAction(formData: FormData) {
 
   revalidatePath('/company');
   redirect('/company?success=request_created');
+}
+
+// 会社主導の取引遷移。SECURITY DEFINER 関数経由（migration 0022）。
+// 本人の企業メンバー判定・許可遷移は関数内で再検証する。
+export async function companyAdvanceDealAction(formData: FormData) {
+  const readValue = (key: string) => {
+    const value = formData.get(key);
+    return typeof value === 'string' ? value.trim() : null;
+  };
+
+  const dealId = readValue('deal_id');
+  const toStatus = readValue('to_status');
+  const fromStatus = readValue('from_status');
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+  if (!currentUser.roles.some((role) => COMPANY_ROLES.includes(role))) {
+    redirect('/company?error=forbidden');
+  }
+  if (!dealId || !UUID_RE.test(dealId)) {
+    redirect('/company?error=deal_invalid');
+  }
+  // UX 用の事前ガード（最終判定は関数内）。
+  if (!toStatus || !fromStatus || !isCompanyDealTransitionAllowed(fromStatus, toStatus)) {
+    redirect('/company?error=deal_transition_invalid');
+  }
+
+  const supabase = createServerSupabaseClient();
+  const { error } = await supabase.rpc('company_advance_deal', {
+    _deal_id: dealId,
+    _to_status: toStatus,
+    _reason: readValue('reason') || null
+  });
+
+  if (error) {
+    redirect('/company?error=deal_transition_failed');
+  }
+
+  // 取引の発明者へ通知（visible_to_inventor=true で履歴も共有）。
+  const admin = createAdminSupabaseClient();
+  const { data: deal } = await admin
+    .from('deal_pipeline')
+    .select('invention_id, company_account_id')
+    .eq('id', dealId)
+    .maybeSingle();
+
+  await recordAuditLog({
+    eventType: 'deal_status_changed',
+    targetTable: 'deal_pipeline',
+    targetId: dealId,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    dealId,
+    inventionId: deal?.invention_id ?? null,
+    companyAccountId: deal?.company_account_id ?? null,
+    metadata: { from_status: fromStatus, to_status: toStatus, by: 'company' }
+  });
+
+  if (deal?.invention_id) {
+    const { data: owner } = await admin
+      .from('inventions')
+      .select('inventor_id')
+      .eq('id', deal.invention_id)
+      .maybeSingle();
+    if (owner?.inventor_id) {
+      await createNotification({
+        recipientUserId: owner.inventor_id,
+        type: 'deal_status_changed',
+        title: '取引の状況が更新されました',
+        body: '企業側の操作により取引状況が更新されました。',
+        inventionId: deal.invention_id,
+        dealId,
+        linkPath: '/inventor'
+      });
+    }
+  }
+
+  revalidatePath('/company');
+  redirect('/company?success=deal_updated');
 }

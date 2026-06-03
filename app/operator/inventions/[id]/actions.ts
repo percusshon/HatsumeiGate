@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
-import { isOperatorTransitionAllowed } from '@/lib/invention/status';
+import { isOperatorTransitionAllowed, isTeaserPublishableStatus } from '@/lib/invention/status';
 import { recordAuditLog } from '@/lib/audit/log';
 import { isDisclosureLevel, type DisclosureLevel } from '@/lib/company/disclosure';
 import {
@@ -178,8 +178,8 @@ export async function setInventionTeaserAction(formData: FormData) {
     redirect(`${detailPath}?error=not_found`);
   }
 
-  // 内部審査完了フェーズに限りティザー公開を許可する（保守的ゲート）。
-  if (invention.status !== 'attorney_review_ready') {
+  // 内部審査完了〜企業開示準備フェーズに限りティザー公開を許可する。
+  if (!isTeaserPublishableStatus(invention.status)) {
     redirect(`${detailPath}?error=teaser_status_invalid`);
   }
 

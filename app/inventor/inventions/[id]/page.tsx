@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { inventorFacingStatusLabel } from '@/lib/invention/status';
 import { disclosureLevelLabel, disclosureRequestStatusLabel } from '@/lib/company/disclosure';
-import { setDisclosureApprovalAction } from './disclosure-actions';
+import { setDisclosureApprovalAction, withdrawInventionAction } from './disclosure-actions';
 import { deleteInventionFileAction, uploadInventionFileAction, viewInventionFileAction } from './file-actions';
 
 type SearchParams = {
@@ -46,15 +46,29 @@ const NOTICE_MESSAGES: Record<string, string> = {
   file_record_failed: 'ファイル情報の登録に失敗しました。',
   file_not_found: '対象のファイルが見つかりませんでした。',
   file_url_failed: '閲覧用URLの発行に失敗しました。',
-  file_delete_failed: 'ファイルの削除に失敗しました。'
+  file_delete_failed: 'ファイルの削除に失敗しました。',
+  withdraw_failed: 'この発明は現在のステータスでは取り下げできません。'
 };
 
 const SUCCESS_MESSAGES: Record<string, string> = {
   disclosure_approved: '開示に同意しました。',
   disclosure_revoked: '開示同意を取り消しました。',
   file_uploaded: 'ファイルをアップロードしました。',
-  file_deleted: 'ファイルを削除しました。'
+  file_deleted: 'ファイルを削除しました。',
+  invention_withdrawn: '発明を取り下げました。'
 };
+
+// 発明者が取り下げできるフェーズ（migration 0021 の関数と一致させる）。
+const INVENTOR_WITHDRAWABLE_STATUSES = [
+  'submitted',
+  'screening',
+  'needs_more_info',
+  'prior_art_research',
+  'ip_strategy_review',
+  'prototype_review',
+  'attorney_review_ready',
+  'company_disclosure_ready'
+];
 
 function formatFileSize(bytes: number | null): string {
   if (!bytes || bytes <= 0) {
@@ -316,6 +330,27 @@ export default async function InventionDetailPage({
           閲覧用URLは短時間で失効します。社外共有・第三者転送はしないでください。アクセスは記録されます。
         </p>
       </section>
+
+      {INVENTOR_WITHDRAWABLE_STATUSES.includes(invention.status) ? (
+        <section className="space-y-3 rounded-md border border-red-200 bg-white p-5">
+          <h4 className="text-lg font-semibold text-red-800">発明の取り下げ</h4>
+          <p className="text-sm text-slate-600">
+            取り下げると審査・企業提案の対象から外れます。企業検討・交渉に進んだ後は取り下げできません。
+          </p>
+          <form action={withdrawInventionAction} className="space-y-2">
+            <input type="hidden" name="invention_id" value={invention.id} />
+            <textarea
+              name="reason"
+              rows={2}
+              placeholder="取り下げ理由（任意）"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button type="submit" className="rounded-md border border-red-300 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">
+              この発明を取り下げる
+            </button>
+          </form>
+        </section>
+      ) : null}
 
       <Link href="/inventor" className="inline-block text-sm text-blue-700 hover:underline">
         Inventorダッシュボードへ戻る

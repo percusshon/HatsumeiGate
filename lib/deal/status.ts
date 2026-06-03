@@ -107,3 +107,26 @@ export function getOperatorDealNextStatuses(current: string | null | undefined):
 export function isOperatorDealTransitionAllowed(from: string, to: string): boolean {
   return getOperatorDealNextStatuses(from).includes(to as DealStatus);
 }
+
+// 会社（企業メンバー）が実行できる遷移（docs/deal-pipeline-state-machine.md の会社主導遷移）。
+// 会社内ロール（user/admin/legal_reviewer）の細分は MVP では区別せず、企業メンバーであれば可とする。
+export const COMPANY_DEAL_TRANSITIONS: Partial<Record<DealStatus, DealStatus[]>> = {
+  no_interest: ['interested', 'declined'],
+  interested: ['nda_requested', 'declined'],
+  nda_requested: ['nda_accepted', 'declined'],
+  nda_accepted: ['meeting_requested'],
+  meeting_requested: ['meeting_completed', 'declined'],
+  evaluating: ['declined'],
+  terms_proposed: ['negotiating']
+};
+
+export function getCompanyDealNextStatuses(current: string | null | undefined): DealStatus[] {
+  if (!current) {
+    return [];
+  }
+  return COMPANY_DEAL_TRANSITIONS[current as DealStatus] ?? [];
+}
+
+export function isCompanyDealTransitionAllowed(from: string, to: string): boolean {
+  return getCompanyDealNextStatuses(from).includes(to as DealStatus);
+}
