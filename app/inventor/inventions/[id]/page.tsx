@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { inventorFacingStatusLabel } from '@/lib/invention/status';
 import { disclosureLevelLabel, disclosureRequestStatusLabel } from '@/lib/company/disclosure';
+import { formatAmount, revenueEventTypeLabel } from '@/lib/revenue/events';
 import { respondNeedsMoreInfoAction, setDisclosureApprovalAction, withdrawInventionAction } from './disclosure-actions';
 import { deleteInventionFileAction, uploadInventionFileAction, viewInventionFileAction } from './file-actions';
 
@@ -157,6 +158,22 @@ export default async function InventionDetailPage({
     .order('created_at', { ascending: false });
   const inventionFiles = (fileRows ?? []) as InventionFile[];
 
+  // RLS（revenue_events_select_own_inventor）により、自分の発明の収益のみ返る。
+  const { data: revenueRows } = await supabase
+    .from('revenue_events')
+    .select('id, event_type, amount, currency, inventor_amount, occurred_at')
+    .eq('invention_id', params.id)
+    .is('deleted_at', null)
+    .order('occurred_at', { ascending: false });
+  const revenueEvents = (revenueRows ?? []) as Array<{
+    id: string;
+    event_type: string;
+    amount: number | string | null;
+    currency: string | null;
+    inventor_amount: number | string | null;
+    occurred_at: string | null;
+  }>;
+
   const noticeMessage = searchParams?.error ? NOTICE_MESSAGES[searchParams.error] : undefined;
   const successMessage = searchParams?.success ? SUCCESS_MESSAGES[searchParams.success] : undefined;
 
@@ -289,6 +306,21 @@ export default async function InventionDetailPage({
               追加情報を提出する
             </button>
           </form>
+        </section>
+      ) : null}
+
+      {revenueEvents.length > 0 ? (
+        <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
+          <h4 className="text-lg font-semibold">収益</h4>
+          <ul className="space-y-1 text-sm text-slate-700">
+            {revenueEvents.map((ev) => (
+              <li key={ev.id} className="text-xs text-slate-600">
+                {ev.occurred_at ? new Date(ev.occurred_at).toLocaleDateString('ja-JP') : '日付未設定'} /{' '}
+                {revenueEventTypeLabel(ev.event_type)} / あなたの取り分: {formatAmount(ev.inventor_amount, ev.currency)}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-slate-500">金額は運営が記録した実績です。確定条件・支払時期は別途ご連絡します。</p>
         </section>
       ) : null}
 

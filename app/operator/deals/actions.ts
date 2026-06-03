@@ -6,8 +6,9 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { isDealType, isOperatorDealTransitionAllowed } from '@/lib/deal/status';
+import { isRevenueEventType } from '@/lib/revenue/events';
 import { recordAuditLog } from '@/lib/audit/log';
-import { createNotifications, getCompanyMemberUserIds, type NotificationInput } from '@/lib/notifications/notify';
+import { createNotification, createNotifications, getCompanyMemberUserIds, type NotificationInput } from '@/lib/notifications/notify';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -253,4 +254,126 @@ export async function createDealAction(formData: FormData) {
 
   revalidatePath('/operator/deals');
   redirect('/operator/deals?success=deal_created');
+}
+
+// operator が取引に対し収益イベントを記録する（migration 0026 の insert RLS）。
+// 金額・通貨・手数料は入力値として保存する（業務上の固定ポリシーは持たない）。
+export async function recordRevenueEventAction(formData: FormData) {
+  const readValue = (key: string) => {
+    const value = formData.get(key);
+    return typeof value === 'string' ? value.trim() : null;
+  };
+  const readNumber = (key: string): number | null => {
+    const raw = readValue(key);
+    if (!raw) {
+      return null;
+    }
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : NaN;
+  };
+
+  const dealId = readValue('deal_id');
+  if (!dealId || !UUID_RE.test(dealId)) {
+    redirect('/operator/deals?error=deal_id_missing');
+  }
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+  if (!currentUser.roles.some((role) => OPERATOR_ROLES.includes(role))) {
+    redirect('/operator/deals?error=forbidden');
+  }
+
+  const eventType = readValue('event_type');
+  if (!eventType || !isRevenueEventType(eventType)) {
+    redirect('/operator/deals?error=revenue_type_invalid');
+  }
+
+  const amount = readNumber('amount');
+  if (amount !== null && Number.isNaN(amount)) {
+    redirect('/operator/deals?error=revenue_amount_invalid');
+  }
+  const inventorAmount = readNumber('inventor_amount');
+  const platformFeeAmount = readNumber('platform_fee_amount');
+  if (
+    (inventorAmount !== null && Number.isNaN(inventorAmount)) ||
+    (platformFeeAmount !== null && Number.isNaN(platformFeeAmount))
+  ) {
+    redirect('/operator/deals?error=revenue_amount_invalid');
+  }
+
+  const currency = readValue('currency') || 'JPY';
+  const occurredAt = readValue('occurred_at');
+
+  const supabase = createServerSupabaseClient();
+
+  // deal から invention/company を引き継ぐ（入力の取り違え防止）。
+  const { data: deal } = await supabase
+    .from('deal_pipeline')
+    .select('id, invention_id, company_account_id')
+    .eq('id', dealId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (!deal) {
+    redirect('/operator/deals?error=not_found');
+  }
+
+  const { data: created, error } = await supabase
+    .from('revenue_events')
+    .insert({
+      deal_id: dealId,
+      invention_id: deal.invention_id,
+      company_account_id: deal.company_account_id,
+      event_type: eventType,
+      amount,
+      currency,
+      platform_fee_amount: platformFeeAmount,
+      inventor_amount: inventorAmount,
+      occurred_at: occurredAt ? new Date(occurredAt).toISOString() : new Date().toISOString(),
+      created_by: currentUser.id
+    })
+    .select('id')
+    .single();
+
+  if (error || !created) {
+    redirect('/operator/deals?error=revenue_failed');
+  }
+
+  await recordAuditLog({
+    eventType: 'revenue_recorded',
+    targetTable: 'revenue_events',
+    targetId: created.id,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    dealId,
+    inventionId: deal.invention_id,
+    companyAccountId: deal.company_account_id,
+    metadata: { revenue_event_type: eventType }
+  });
+
+  // 発明者へ収益記録を通知（金額本文は通知に含めない）。
+  if (deal.invention_id) {
+    const admin = createAdminSupabaseClient();
+    const { data: owner } = await admin
+      .from('inventions')
+      .select('inventor_id')
+      .eq('id', deal.invention_id)
+      .maybeSingle();
+    if (owner?.inventor_id) {
+      await createNotification({
+        recipientUserId: owner.inventor_id,
+        type: 'revenue_recorded',
+        title: '収益イベントが記録されました',
+        body: '取引に関する収益が記録されました。詳細はダッシュボードでご確認ください。',
+        inventionId: deal.invention_id,
+        dealId,
+        linkPath: '/inventor'
+      });
+    }
+  }
+
+  revalidatePath('/operator/deals');
+  redirect('/operator/deals?success=revenue_recorded');
 }

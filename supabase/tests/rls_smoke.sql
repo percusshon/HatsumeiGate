@@ -215,6 +215,41 @@ begin
 end $$;
 rollback;
 
+-- 9b) revenue_events: operator insert allowed, inventor inserts denied,
+--     inventor sees own invention revenue, others do not.
+begin;
+insert into public.deal_pipeline (id, invention_id, company_account_id, deal_type, status)
+values ('dddddddd-0000-0000-0000-dddddddd0c01','aaaaaaaa-1111-1111-1111-aaaaaaaa1111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','exclusive_license','negotiating');
+set local role authenticated;
+set local request.jwt.claims to '{"sub":"33333333-3333-3333-3333-333333333333","role":"authenticated"}';
+do $$
+begin
+  insert into public.revenue_events (deal_id, invention_id, company_account_id, event_type, amount, currency, inventor_amount, occurred_at, created_by)
+  values ('dddddddd-0000-0000-0000-dddddddd0c01','aaaaaaaa-1111-1111-1111-aaaaaaaa1111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','license_royalty',10000,'JPY',7000, now(),'33333333-3333-3333-3333-333333333333');
+exception when others then
+  raise exception 'ASSERT FAILED: operator revenue insert should succeed (%)', sqlerrm;
+end $$;
+reset role;
+set local role authenticated;
+set local request.jwt.claims to '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
+do $$
+declare c int;
+begin
+  select count(*) into c from public.revenue_events where invention_id='aaaaaaaa-1111-1111-1111-aaaaaaaa1111';
+  if c <> 0 then raise exception 'ASSERT FAILED: non-owner inventor must not see revenue (got %)', c; end if;
+end $$;
+do $$
+begin
+  insert into public.revenue_events (invention_id, event_type, amount, currency, occurred_at)
+  values ('aaaaaaaa-1111-1111-1111-aaaaaaaa1111','adjustment',1,'JPY',now());
+  raise exception 'ASSERT FAILED: inventor revenue insert should be denied';
+exception
+  when insufficient_privilege then null;
+  when others then
+    if sqlerrm like 'ASSERT FAILED%' then raise; end if;
+end $$;
+rollback;
+
 -- 10) buckets exist (storage policy prerequisite).
 do $$
 declare c int;

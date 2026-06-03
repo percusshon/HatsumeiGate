@@ -10,7 +10,8 @@ import {
   getOperatorDealNextStatuses
 } from '@/lib/deal/status';
 import { disclosureLevelLabel } from '@/lib/company/disclosure';
-import { createDealAction, updateDealStatusAction } from './actions';
+import { REVENUE_EVENT_TYPES, REVENUE_EVENT_TYPE_LABELS, formatAmount, revenueEventTypeLabel } from '@/lib/revenue/events';
+import { createDealAction, recordRevenueEventAction, updateDealStatusAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +34,16 @@ type ApprovedRequest = {
   approved_level: string | null;
 };
 
+type RevenueEvent = {
+  id: string;
+  deal_id: string | null;
+  event_type: string;
+  amount: number | string | null;
+  currency: string | null;
+  inventor_amount: number | string | null;
+  occurred_at: string | null;
+};
+
 const ERROR_MESSAGES: Record<string, string> = {
   deal_id_missing: '取引IDが指定されていません。',
   forbidden: 'この操作にはoperator/admin権限が必要です。',
@@ -46,12 +57,16 @@ const ERROR_MESSAGES: Record<string, string> = {
   deal_type_invalid: '取引種別の指定が不正です。',
   disclosure_request_not_approved: '承認済みの開示申請のみ取引の起点にできます。',
   deal_already_exists: 'この開示申請からは既に取引が作成されています。',
-  create_failed: '取引の新規作成に失敗しました。'
+  create_failed: '取引の新規作成に失敗しました。',
+  revenue_type_invalid: '収益イベント種別の指定が不正です。',
+  revenue_amount_invalid: '金額は数値で入力してください。',
+  revenue_failed: '収益イベントの記録に失敗しました。'
 };
 
 const SUCCESS_MESSAGES: Record<string, string> = {
   deal_updated: '取引ステータスを更新しました。',
-  deal_created: '取引を新規作成しました。'
+  deal_created: '取引を新規作成しました。',
+  revenue_recorded: '収益イベントを記録しました。'
 };
 
 export default async function OperatorDealsPage({
@@ -123,6 +138,25 @@ export default async function OperatorDealsPage({
     const { data: companies } = await supabase.from('company_accounts').select('id, company_name').in('id', companyIds);
     for (const company of companies ?? []) {
       companyNames[company.id] = company.company_name;
+    }
+  }
+
+  // 収益イベント（operator/reviewer/admin の select RLS）。
+  const revenueByDeal: Record<string, RevenueEvent[]> = {};
+  if (deals.length > 0) {
+    const { data: revenueRows } = await supabase
+      .from('revenue_events')
+      .select('id, deal_id, event_type, amount, currency, inventor_amount, occurred_at')
+      .in(
+        'deal_id',
+        deals.map((d) => d.id)
+      )
+      .is('deleted_at', null)
+      .order('occurred_at', { ascending: false });
+    for (const ev of (revenueRows ?? []) as RevenueEvent[]) {
+      if (ev.deal_id) {
+        (revenueByDeal[ev.deal_id] ??= []).push(ev);
+      }
     }
   }
 
@@ -286,6 +320,58 @@ export default async function OperatorDealsPage({
                     </button>
                   </form>
                 )}
+
+                <div className="space-y-2 border-t border-slate-200 pt-3 text-sm text-slate-700">
+                  <p className="font-medium">収益イベント</p>
+                  {(revenueByDeal[deal.id] ?? []).length === 0 ? (
+                    <p className="text-xs text-slate-600">記録された収益イベントはありません。</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {(revenueByDeal[deal.id] ?? []).map((ev) => (
+                        <li key={ev.id} className="text-xs text-slate-600">
+                          {ev.occurred_at ? new Date(ev.occurred_at).toLocaleDateString('ja-JP') : '日付未設定'} /{' '}
+                          {revenueEventTypeLabel(ev.event_type)} / 金額: {formatAmount(ev.amount, ev.currency)} / 発明者分:{' '}
+                          {formatAmount(ev.inventor_amount, ev.currency)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <form action={recordRevenueEventAction} className="flex flex-wrap items-end gap-2 pt-1">
+                    <input type="hidden" name="deal_id" value={deal.id} />
+                    <label className="space-y-0.5 text-xs text-slate-600">
+                      <span className="block">種別</span>
+                      <select name="event_type" required defaultValue="" className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+                        <option value="" disabled>
+                          選択
+                        </option>
+                        {REVENUE_EVENT_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {REVENUE_EVENT_TYPE_LABELS[t]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-0.5 text-xs text-slate-600">
+                      <span className="block">金額</span>
+                      <input name="amount" type="number" step="0.01" placeholder="0" className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+                    </label>
+                    <label className="space-y-0.5 text-xs text-slate-600">
+                      <span className="block">発明者分</span>
+                      <input name="inventor_amount" type="number" step="0.01" placeholder="0" className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+                    </label>
+                    <label className="space-y-0.5 text-xs text-slate-600">
+                      <span className="block">通貨</span>
+                      <input name="currency" type="text" defaultValue="JPY" className="w-16 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+                    </label>
+                    <label className="space-y-0.5 text-xs text-slate-600">
+                      <span className="block">発生日</span>
+                      <input name="occurred_at" type="date" className="rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+                    </label>
+                    <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-800">
+                      収益を記録
+                    </button>
+                  </form>
+                </div>
               </li>
             );
           })}
