@@ -6,7 +6,11 @@ import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { recordAuditLog } from '@/lib/audit/log';
 import { disclosureLevelRank, disclosureRequiresNda } from '@/lib/company/disclosure';
-import { INVENTION_FILE_VIEW_TTL_SECONDS, isFileDisclosableToCompany } from '@/lib/storage/invention-files';
+import {
+  COMPANY_FILE_DOWNLOAD_LIMIT_PER_DAY,
+  INVENTION_FILE_VIEW_TTL_SECONDS,
+  isFileDisclosableToCompany
+} from '@/lib/storage/invention-files';
 import { getClientIp } from '@/lib/http/client-ip';
 
 // 企業がNDA成立・開示承認済みのファイルを短期 signed URL で閲覧する。
@@ -88,10 +92,22 @@ export async function viewCompanyDisclosureFileAction(formData: FormData) {
     redirect(`${detailPath}?error=file_forbidden`);
   }
 
+  // 5) DL回数上限（直近24時間・ユーザー単位、doc §7）。漏洩リスク低減のためのレート制限。
+  const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count: recentDownloads } = await admin
+    .from('company_invention_views')
+    .select('id', { count: 'exact', head: true })
+    .eq('viewed_by', currentUser.id)
+    .eq('view_context', 'company_disclosure_file')
+    .gte('created_at', sinceIso);
+  if ((recentDownloads ?? 0) >= COMPANY_FILE_DOWNLOAD_LIMIT_PER_DAY) {
+    redirect(`${detailPath}?error=file_download_limit`);
+  }
+
   const headerList = headers();
   const clientIp = getClientIp(headerList);
 
-  // 5) 配信前に閲覧ログを記録（漏洩対策の必須要件）。
+  // 6) 配信前に閲覧ログを記録（漏洩対策の必須要件）。
   await admin.from('company_invention_views').insert({
     invention_id: inventionId,
     company_account_id: companyAccountId,

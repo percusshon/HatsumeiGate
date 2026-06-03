@@ -33,7 +33,21 @@ function DeniedView({ message }: { message: string }) {
 // 3) 当該発明への approved + inventor_approved + approved_level の開示承認
 // 4) level_2 以上は有効NDA
 // そして開示前に閲覧ログ(company_invention_views)を必ず記録する。
-export default async function CompanyInventionDisclosurePage({ params }: { params: RouteParams }) {
+const FILE_ERROR_MESSAGES: Record<string, string> = {
+  file_download_limit: '本日のファイル閲覧回数の上限に達しました。時間をおいて再度お試しください。',
+  file_forbidden: 'このファイルを閲覧する権限がありません。',
+  file_nda_required: 'このファイルの閲覧には有効なNDAが必要です。',
+  file_url_failed: '閲覧用URLの発行に失敗しました。',
+  file_not_found: '対象のファイルが見つかりませんでした。'
+};
+
+export default async function CompanyInventionDisclosurePage({
+  params,
+  searchParams
+}: {
+  params: RouteParams;
+  searchParams?: { error?: string };
+}) {
   const currentUser = await getCurrentUser();
 
   if (!currentUser) {
@@ -175,6 +189,12 @@ export default async function CompanyInventionDisclosurePage({ params }: { param
       <Link href="/company" className="inline-block text-sm text-blue-700 hover:underline">
         Company Portalへ戻る
       </Link>
+
+      {searchParams?.error && FILE_ERROR_MESSAGES[searchParams.error] ? (
+        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {FILE_ERROR_MESSAGES[searchParams.error]}
+        </p>
+      ) : null}
 
       <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
         この画面の情報は秘密情報です。スクリーンショット・社外共有・第三者転送は禁止です。閲覧は記録されています。
