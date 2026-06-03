@@ -27,6 +27,8 @@ import {
 } from '@/lib/invention/ip-strategy';
 import { DISCLOSURE_LEVELS, DISCLOSURE_LEVEL_LABELS, disclosureLevelLabel } from '@/lib/company/disclosure';
 import {
+  assignPartnerAction,
+  revokePartnerAssignmentAction,
   setInventionFileDisclosureAction,
   setInventionTeaserAction,
   updateInventionStatusAction,
@@ -54,6 +56,11 @@ const STATUS_ERROR_MESSAGES: Record<string, string> = {
   file_level_invalid: '企業開示レベルの指定が不正です。',
   file_level_update_failed: 'ファイルの企業開示レベルの更新に失敗しました。',
   file_url_failed: '閲覧用URLの発行に失敗しました。',
+  partner_user_invalid: 'パートナーのユーザーID（UUID）が不正です。',
+  partner_exists: 'そのパートナーは既にこの案件に割り当てられています。',
+  partner_assign_failed: '弁理士パートナーの割当に失敗しました。',
+  partner_assignment_invalid: '割当の指定が不正です。',
+  partner_revoke_failed: '弁理士パートナー割当の取消に失敗しました。',
   report_failed: '審査レポートの保存に失敗しました。',
   score_failed: 'レポートは保存されましたが、スコア記録に失敗しました。',
   invalid_score: 'スコアは0〜5の整数で入力してください。',
@@ -71,7 +78,9 @@ const SUCCESS_MESSAGES: Record<string, string> = {
   ip_strategy_created: '知財方針ノートを保存しました。',
   teaser_published: '企業向けティザーを公開しました。',
   teaser_unpublished: '企業向けティザーを非公開にしました。',
-  file_level_updated: 'ファイルの企業開示レベルを更新しました。'
+  file_level_updated: 'ファイルの企業開示レベルを更新しました。',
+  partner_assigned: '弁理士パートナーを割り当てました。',
+  partner_revoked: '弁理士パートナーの割当を取り消しました。'
 };
 
 type InventionDetail = {
@@ -289,6 +298,20 @@ export default async function OperatorInventionDetailPage({
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
   const inventionFiles = (fileRows ?? []) as InventionFile[];
+
+  // 弁理士パートナー割当（operator select RLS, migration 0027）。
+  const { data: assignmentRows } = await supabase
+    .from('partner_invention_assignments')
+    .select('id, partner_user_id, assignment_note, created_at')
+    .eq('invention_id', params.id)
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false });
+  const partnerAssignments = (assignmentRows ?? []) as Array<{
+    id: string;
+    partner_user_id: string;
+    assignment_note: string | null;
+    created_at: string | null;
+  }>;
 
   const inventionDetail = invention as InventionDetail;
   const nextStatuses = getOperatorNextStatuses(inventionDetail.status);
@@ -671,6 +694,54 @@ export default async function OperatorInventionDetailPage({
         <p className="text-xs text-slate-500">
           level_2（NDA要約）以上に設定したファイルのみ、NDA成立済みかつ開示承認のある企業に配信されます。level_0/1 は企業へ配信しません。
         </p>
+      </section>
+
+      <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-semibold">弁理士パートナー割当</h4>
+        <p className="text-sm text-slate-600">
+          割り当てたパートナーは、この案件を読み取り専用で閲覧できます（相談準備用途）。
+        </p>
+        {partnerAssignments.length === 0 ? (
+          <p className="text-sm text-slate-600">割当中のパートナーはいません。</p>
+        ) : (
+          <ul className="space-y-1">
+            {partnerAssignments.map((a) => (
+              <li key={a.id} className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <span>
+                  {a.partner_user_id}
+                  {a.assignment_note ? `（${a.assignment_note}）` : ''}
+                </span>
+                <form action={revokePartnerAssignmentAction}>
+                  <input type="hidden" name="invention_id" value={inventionDetail.id} />
+                  <input type="hidden" name="assignment_id" value={a.id} />
+                  <button type="submit" className="rounded border border-red-200 px-2 py-0.5 text-xs font-semibold text-red-700 hover:bg-red-50">
+                    取消
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form action={assignPartnerAction} className="flex flex-wrap items-end gap-2 pt-1">
+          <input type="hidden" name="invention_id" value={inventionDetail.id} />
+          <label className="space-y-0.5 text-xs text-slate-600">
+            <span className="block">パートナーのユーザーID（UUID）</span>
+            <input
+              name="partner_user_id"
+              type="text"
+              required
+              placeholder="00000000-0000-0000-0000-000000000000"
+              className="w-72 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="space-y-0.5 text-xs text-slate-600">
+            <span className="block">メモ（任意）</span>
+            <input name="assignment_note" type="text" className="w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+          </label>
+          <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-800">
+            割当
+          </button>
+        </form>
       </section>
 
       <section className="space-y-3 rounded-md border border-slate-200 bg-white p-5">

@@ -250,6 +250,49 @@ exception
 end $$;
 rollback;
 
+-- 9c) partner assignment: operator can assign, non-operator denied,
+--     assigned partner reads only assigned inventions and cannot write.
+begin;
+set local role authenticated;
+set local request.jwt.claims to '{"sub":"33333333-3333-3333-3333-333333333333","role":"authenticated"}';
+do $$
+begin
+  insert into public.partner_invention_assignments (invention_id, partner_user_id, assigned_by)
+  values ('aaaaaaaa-2222-2222-2222-aaaaaaaa2222','99999999-9999-9999-9999-999999999999','33333333-3333-3333-3333-333333333333');
+exception when others then
+  raise exception 'ASSERT FAILED: operator partner assign should succeed (%)', sqlerrm;
+end $$;
+rollback;
+
+begin;
+set local role authenticated;
+set local request.jwt.claims to '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+do $$
+begin
+  insert into public.partner_invention_assignments (invention_id, partner_user_id, assigned_by)
+  values ('aaaaaaaa-2222-2222-2222-aaaaaaaa2222','99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111');
+  raise exception 'ASSERT FAILED: non-operator partner assign should be denied';
+exception
+  when insufficient_privilege then null;
+  when others then
+    if sqlerrm like 'ASSERT FAILED%' then raise; end if;
+end $$;
+rollback;
+
+-- partner sees only assigned inventions (seed assigns inv1 to partner 9999).
+begin;
+set local role authenticated;
+set local request.jwt.claims to '{"sub":"99999999-9999-9999-9999-999999999999","role":"authenticated"}';
+do $$
+declare c_assigned int; c_unassigned int;
+begin
+  select count(*) into c_assigned from public.inventions where id='aaaaaaaa-1111-1111-1111-aaaaaaaa1111';
+  select count(*) into c_unassigned from public.inventions where id='aaaaaaaa-2222-2222-2222-aaaaaaaa2222';
+  if c_assigned <> 1 then raise exception 'ASSERT FAILED: partner should see assigned invention (got %)', c_assigned; end if;
+  if c_unassigned <> 0 then raise exception 'ASSERT FAILED: partner must not see unassigned invention (got %)', c_unassigned; end if;
+end $$;
+rollback;
+
 -- 10) buckets exist (storage policy prerequisite).
 do $$
 declare c int;

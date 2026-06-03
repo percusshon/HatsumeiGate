@@ -15,6 +15,7 @@ import {
 import { createNotification } from '@/lib/notifications/notify';
 
 const OPERATOR_ROLES = ['operator', 'admin'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function updateInventionStatusAction(formData: FormData) {
   const readValue = (key: string) => {
@@ -342,4 +343,119 @@ export async function viewInventionFileAsOperatorAction(formData: FormData) {
   });
 
   redirect(signed.signedUrl);
+}
+
+// 弁理士パートナーの割当（operator/admin、migration 0027 の insert RLS）。
+export async function assignPartnerAction(formData: FormData) {
+  const readValue = (key: string) => {
+    const value = formData.get(key);
+    return typeof value === 'string' ? value.trim() : null;
+  };
+
+  const inventionId = readValue('invention_id');
+  if (!inventionId) {
+    redirect('/operator/inventions?error=invention_id_missing');
+  }
+  const detailPath = `/operator/inventions/${inventionId}`;
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+  if (!currentUser.roles.some((role) => OPERATOR_ROLES.includes(role))) {
+    redirect(`${detailPath}?error=forbidden`);
+  }
+
+  const partnerUserId = readValue('partner_user_id');
+  if (!partnerUserId || !UUID_RE.test(partnerUserId)) {
+    redirect(`${detailPath}?error=partner_user_invalid`);
+  }
+
+  const supabase = createServerSupabaseClient();
+
+  // 既存のアクティブ割当があれば重複させない。
+  const { data: existing } = await supabase
+    .from('partner_invention_assignments')
+    .select('id')
+    .eq('invention_id', inventionId)
+    .eq('partner_user_id', partnerUserId)
+    .is('revoked_at', null)
+    .maybeSingle();
+  if (existing) {
+    redirect(`${detailPath}?error=partner_exists`);
+  }
+
+  const { error } = await supabase.from('partner_invention_assignments').insert({
+    invention_id: inventionId,
+    partner_user_id: partnerUserId,
+    assigned_by: currentUser.id,
+    assignment_note: readValue('assignment_note')
+  });
+
+  if (error) {
+    redirect(`${detailPath}?error=partner_assign_failed`);
+  }
+
+  await recordAuditLog({
+    eventType: 'admin_action',
+    targetTable: 'partner_invention_assignments',
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId,
+    metadata: { action: 'partner_assigned' }
+  });
+
+  revalidatePath(detailPath);
+  redirect(`${detailPath}?success=partner_assigned`);
+}
+
+// 弁理士パートナー割当の取消（operator/admin、migration 0027 の update RLS）。
+export async function revokePartnerAssignmentAction(formData: FormData) {
+  const readValue = (key: string) => {
+    const value = formData.get(key);
+    return typeof value === 'string' ? value.trim() : null;
+  };
+
+  const inventionId = readValue('invention_id');
+  const assignmentId = readValue('assignment_id');
+  const detailPath = inventionId ? `/operator/inventions/${inventionId}` : '/operator/inventions';
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+  if (!currentUser.roles.some((role) => OPERATOR_ROLES.includes(role))) {
+    redirect(`${detailPath}?error=forbidden`);
+  }
+  if (!assignmentId) {
+    redirect(`${detailPath}?error=partner_assignment_invalid`);
+  }
+
+  const supabase = createServerSupabaseClient();
+  const { error } = await supabase
+    .from('partner_invention_assignments')
+    .update({
+      revoked_at: new Date().toISOString(),
+      revoked_by: currentUser.id,
+      revocation_reason: readValue('revocation_reason')
+    })
+    .eq('id', assignmentId)
+    .is('revoked_at', null);
+
+  if (error) {
+    redirect(`${detailPath}?error=partner_revoke_failed`);
+  }
+
+  await recordAuditLog({
+    eventType: 'admin_action',
+    targetTable: 'partner_invention_assignments',
+    targetId: assignmentId,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId: inventionId ?? null,
+    metadata: { action: 'partner_assignment_revoked' }
+  });
+
+  revalidatePath(detailPath);
+  redirect(`${detailPath}?success=partner_revoked`);
 }
