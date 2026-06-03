@@ -52,6 +52,7 @@ Hatsumei Gateは、個人・現場職・クリエイター・エンジニアが�
 - [docs/repository-and-project-setup.md](docs/repository-and-project-setup.md)
 - [docs/storage-policy-plan.md](docs/storage-policy-plan.md)
 - [docs/operations-and-deployment.md](docs/operations-and-deployment.md)
+- [docs/virus-scan-proposal.md](docs/virus-scan-proposal.md)
 - [docs/otomarket-reuse-notes.md](docs/otomarket-reuse-notes.md)
 
 ## 開示ファイルの透かし

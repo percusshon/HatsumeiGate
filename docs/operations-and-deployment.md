@@ -60,9 +60,10 @@ npm run dev
 
 - 本番 Supabase/Vercel 接続、監視（エラー/レイテンシ）、バックアップ方針。
 - 法務文言（利用規約 `/legal` / プライバシー `/privacy`）の最終確定（現状は暫定ドラフト）。
-- **ウイルススキャン**（`docs/storage-policy-plan.md` §10）: アップロード時の非同期スキャン。
-  スキャナ選定（例: ClamAV / クラウドスキャンAPI）と `invention_files` への
-  スキャン状態列（migration）追加が必要なため、方式決定後に着手する。
+- **ウイルススキャン**（`docs/storage-policy-plan.md` §10 / 詳細は `docs/virus-scan-proposal.md`）:
+  アップロード時の非同期スキャン。スキャナ選定（ClamAV 自前 / クラウドAPI / Edge）と
+  `invention_files` へのスキャン状態列（migration 0029 想定）追加が必要。
+  秘密保持の観点で外部送信型APIは要法務確認。方式決定後に別タスクで着手する。
 
 ## 8. 本番デプロイ手順書（ユーザー作業）
 
