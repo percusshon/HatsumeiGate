@@ -8,7 +8,6 @@ import { recordAuditLog } from '@/lib/audit/log';
 import { isFileDisclosableToCompany } from '@/lib/storage/invention-files';
 import { getClientIp } from '@/lib/http/client-ip';
 import { dealStatusLabel, dealTypeLabel } from '@/lib/deal/status';
-import { viewCompanyDisclosureFileAction } from './file-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -234,19 +233,20 @@ export default async function CompanyInventionDisclosurePage({
                   <p className="font-medium break-all">{file.original_filename}</p>
                   <p className="text-xs text-slate-500">{file.mime_type || '種別不明'}</p>
                 </div>
-                <form action={viewCompanyDisclosureFileAction}>
-                  <input type="hidden" name="invention_id" value={params.id} />
-                  <input type="hidden" name="file_id" value={file.id} />
-                  <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-800">
-                    閲覧
-                  </button>
-                </form>
+                <a
+                  href={`/company/inventions/${params.id}/files/${file.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-800"
+                >
+                  閲覧
+                </a>
               </li>
             ))}
           </ul>
         )}
         <p className="text-xs text-slate-500">
-          ファイルの閲覧URLは短時間で失効し、閲覧は記録されます。社外共有・第三者転送は禁止です。
+          ファイルには貴社名・閲覧者・閲覧日時の透かしが入ります。閲覧は記録されます。社外共有・第三者転送は禁止です。
         </p>
       </section>
 
