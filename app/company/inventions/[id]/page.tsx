@@ -2,7 +2,12 @@ import Link from 'next/link';
 import { headers } from 'next/headers';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { createAdminSupabaseClient } from '@/lib/supabase/admin';
-import { disclosureLevelLabel, disclosureLevelRank, disclosureRequiresNda } from '@/lib/company/disclosure';
+import {
+  disclosureLevelLabel,
+  disclosureLevelRank,
+  disclosureRequiresNda,
+  isDisclosureApprovalActive
+} from '@/lib/company/disclosure';
 import { buildInventionDisclosureDto, type InventionRecord } from '@/lib/company/disclosure-dto';
 import { recordAuditLog } from '@/lib/audit/log';
 import { isFileDisclosableToCompany } from '@/lib/storage/invention-files';
@@ -37,7 +42,8 @@ const FILE_ERROR_MESSAGES: Record<string, string> = {
   file_forbidden: 'このファイルを閲覧する権限がありません。',
   file_nda_required: 'このファイルの閲覧には有効なNDAが必要です。',
   file_url_failed: '閲覧用URLの発行に失敗しました。',
-  file_not_found: '対象のファイルが見つかりませんでした。'
+  file_not_found: '対象のファイルが見つかりませんでした。',
+  file_expired: 'この開示の有効期限が切れています。再度の開示承認が必要です。'
 };
 
 export default async function CompanyInventionDisclosurePage({
@@ -76,9 +82,9 @@ export default async function CompanyInventionDisclosurePage({
   }
 
   // 2) 当該発明への、所属企業の承認済み開示申請。
-  const { data: approvals } = await admin
+  const { data: approvalsRaw } = await admin
     .from('company_disclosure_requests')
-    .select('id, company_account_id, approved_level')
+    .select('id, company_account_id, approved_level, expires_at')
     .eq('invention_id', params.id)
     .in('company_account_id', companyIds)
     .eq('status', 'approved')
@@ -86,8 +92,14 @@ export default async function CompanyInventionDisclosurePage({
     .not('approved_level', 'is', null)
     .is('deleted_at', null);
 
-  if (!approvals || approvals.length === 0) {
+  if (!approvalsRaw || approvalsRaw.length === 0) {
     return <DeniedView message="この発明に対する有効な開示承認がありません。" />;
+  }
+
+  // 期限付き自動失効: expires_at を過ぎた承認は無効として扱う。
+  const approvals = approvalsRaw.filter((row) => isDisclosureApprovalActive(row.expires_at));
+  if (approvals.length === 0) {
+    return <DeniedView message="この開示の有効期限が切れています。再度の開示承認が必要です。" />;
   }
 
   // 最も高い承認レベルを採用。

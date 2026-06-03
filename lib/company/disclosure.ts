@@ -62,6 +62,24 @@ export function disclosureRequiresNda(level: string | null | undefined): boolean
   return disclosureLevelRank(level) >= 2;
 }
 
+// 開示承認が時点で有効か（期限付き自動失効）。
+// company_disclosure_requests.expires_at が未設定なら無期限、設定済みなら現在時刻未満で失効。
+// status 自体は別途 'approved' 等で判定する前提の補助関数。
+export function isDisclosureApprovalActive(
+  expiresAt: string | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!expiresAt) {
+    return true;
+  }
+  const ts = Date.parse(expiresAt);
+  if (Number.isNaN(ts)) {
+    // 解釈不能な値は安全側（失効扱い）にする。
+    return false;
+  }
+  return ts > now.getTime();
+}
+
 export function disclosureLevelLabel(level: string | null | undefined): string {
   if (!level) {
     return '未設定';

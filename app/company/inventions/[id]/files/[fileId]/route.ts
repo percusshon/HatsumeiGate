@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { createAdminSupabaseClient } from '@/lib/supabase/admin';
 import { recordAuditLog } from '@/lib/audit/log';
-import { disclosureLevelRank, disclosureRequiresNda } from '@/lib/company/disclosure';
+import { disclosureLevelRank, disclosureRequiresNda, isDisclosureApprovalActive } from '@/lib/company/disclosure';
 import {
   COMPANY_FILE_DOWNLOAD_LIMIT_PER_DAY,
   INVENTION_FILE_VIEW_TTL_SECONDS,
@@ -51,9 +51,9 @@ export async function GET(request: NextRequest, { params }: { params: RouteParam
   }
 
   // 2) 当該発明の承認済み開示申請（発明者同意あり・承認レベルあり）
-  const { data: approvals } = await admin
+  const { data: approvalsRaw } = await admin
     .from('company_disclosure_requests')
-    .select('id, company_account_id, approved_level')
+    .select('id, company_account_id, approved_level, expires_at')
     .eq('invention_id', inventionId)
     .in('company_account_id', companyIds)
     .eq('status', 'approved')
@@ -61,8 +61,15 @@ export async function GET(request: NextRequest, { params }: { params: RouteParam
     .not('approved_level', 'is', null)
     .is('deleted_at', null);
 
-  if (!approvals || approvals.length === 0) {
+  if (!approvalsRaw || approvalsRaw.length === 0) {
     return NextResponse.redirect(detailUrl('file_forbidden'));
+  }
+
+  // 期限付き自動失効: expires_at を過ぎた承認は無効。
+  const now = new Date();
+  const approvals = approvalsRaw.filter((row) => isDisclosureApprovalActive(row.expires_at, now));
+  if (approvals.length === 0) {
+    return NextResponse.redirect(detailUrl('file_expired'));
   }
 
   const best = approvals.reduce((acc, cur) =>

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   disclosureLevelRank,
   disclosureRequiresNda,
+  isDisclosureApprovalActive,
   isDisclosureLevel
 } from '@/lib/company/disclosure';
 
@@ -33,5 +34,23 @@ describe('isDisclosureLevel', () => {
   it('既知レベルのみ true', () => {
     expect(isDisclosureLevel('level_3_nda_detail')).toBe(true);
     expect(isDisclosureLevel('level_9')).toBe(false);
+  });
+});
+
+describe('isDisclosureApprovalActive（期限付き自動失効）', () => {
+  const now = new Date('2026-06-04T00:00:00Z');
+
+  it('expires_at 未設定は無期限で有効', () => {
+    expect(isDisclosureApprovalActive(null, now)).toBe(true);
+    expect(isDisclosureApprovalActive(undefined, now)).toBe(true);
+  });
+
+  it('未来の期限は有効、過去の期限は失効', () => {
+    expect(isDisclosureApprovalActive('2026-06-05T00:00:00Z', now)).toBe(true);
+    expect(isDisclosureApprovalActive('2026-06-03T23:59:59Z', now)).toBe(false);
+  });
+
+  it('解釈不能な値は安全側（失効）', () => {
+    expect(isDisclosureApprovalActive('not-a-date', now)).toBe(false);
   });
 });
