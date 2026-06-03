@@ -6,6 +6,7 @@ import { disclosureLevelRank, disclosureRequiresNda, isDisclosureApprovalActive 
 import {
   firstExceededFileDownloadLimit,
   INVENTION_FILE_VIEW_TTL_SECONDS,
+  isFileBlockedByScan,
   isFileDisclosableToCompany
 } from '@/lib/storage/invention-files';
 import {
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest, { params }: { params: RouteParam
   // 4) ファイルが当該発明に属し、承認レベルで配信可能か
   const { data: fileRow } = await admin
     .from('invention_files')
-    .select('id, invention_id, original_filename, mime_type, storage_bucket, storage_path, file_visibility, disclosure_level_required')
+    .select('id, invention_id, original_filename, mime_type, storage_bucket, storage_path, file_visibility, disclosure_level_required, scan_status')
     .eq('id', fileId)
     .eq('invention_id', inventionId)
     .is('deleted_at', null)
@@ -105,6 +106,12 @@ export async function GET(request: NextRequest, { params }: { params: RouteParam
 
   if (!fileRow || !isFileDisclosableToCompany(fileRow.file_visibility, fileRow.disclosure_level_required, approvedLevel)) {
     return NextResponse.redirect(detailUrl('file_forbidden'));
+  }
+
+  // 4.5) ウイルススキャンで感染確定（infected）のファイルは配信しない（migration 0029）。
+  // 未スキャン(pending)/error/clean は後方互換のため配信可。詳細は docs/virus-scan-proposal.md。
+  if (isFileBlockedByScan(fileRow.scan_status)) {
+    return NextResponse.redirect(detailUrl('file_scan_blocked'));
   }
 
   // 5) DL回数上限（doc §7 同日/ユーザー、doc §10 月次/ユーザー・案件単位）。

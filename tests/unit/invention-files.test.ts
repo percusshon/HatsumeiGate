@@ -5,6 +5,8 @@ import {
   sanitizeFilename,
   buildInventionFileStoragePath,
   firstExceededFileDownloadLimit,
+  isFileBlockedByScan,
+  FILE_SCAN_STATUSES,
   COMPANY_FILE_DOWNLOAD_LIMIT_PER_DAY,
   COMPANY_FILE_DOWNLOAD_LIMIT_PER_MONTH,
   COMPANY_FILE_DOWNLOAD_LIMIT_PER_INVENTION_PER_DAY
@@ -100,5 +102,28 @@ describe('firstExceededFileDownloadLimit', () => {
         inventionCompanyDaily: COMPANY_FILE_DOWNLOAD_LIMIT_PER_INVENTION_PER_DAY
       })
     ).toBe('invention_daily');
+  });
+});
+
+describe('isFileBlockedByScan（ウイルススキャン配信ゲート）', () => {
+  it('infected のみ配信ブロック', () => {
+    expect(isFileBlockedByScan('infected')).toBe(true);
+  });
+
+  it('pending / clean / error / null は後方互換で配信許可', () => {
+    expect(isFileBlockedByScan('pending')).toBe(false);
+    expect(isFileBlockedByScan('clean')).toBe(false);
+    expect(isFileBlockedByScan('error')).toBe(false);
+    expect(isFileBlockedByScan(null)).toBe(false);
+    expect(isFileBlockedByScan(undefined)).toBe(false);
+  });
+
+  it('未知値は配信許可（既存挙動を壊さない安全側）', () => {
+    expect(isFileBlockedByScan('whatever')).toBe(false);
+  });
+
+  it('FILE_SCAN_STATUSES は4状態で、infected を含む', () => {
+    expect(FILE_SCAN_STATUSES).toEqual(['pending', 'clean', 'infected', 'error']);
+    expect(FILE_SCAN_STATUSES).toContain('infected');
   });
 });

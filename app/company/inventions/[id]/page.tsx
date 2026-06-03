@@ -43,7 +43,8 @@ const FILE_ERROR_MESSAGES: Record<string, string> = {
   file_nda_required: 'このファイルの閲覧には有効なNDAが必要です。',
   file_url_failed: '閲覧用URLの発行に失敗しました。',
   file_not_found: '対象のファイルが見つかりませんでした。',
-  file_expired: 'この開示の有効期限が切れています。再度の開示承認が必要です。'
+  file_expired: 'この開示の有効期限が切れています。再度の開示承認が必要です。',
+  file_scan_blocked: 'このファイルはウイルススキャンで配信が保留されています。運営にお問い合わせください。'
 };
 
 export default async function CompanyInventionDisclosurePage({
