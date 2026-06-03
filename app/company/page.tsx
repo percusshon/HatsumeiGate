@@ -9,7 +9,7 @@ import {
   disclosureRequestStatusLabel
 } from '@/lib/company/disclosure';
 import { DEAL_STATUS_LABELS, dealStatusLabel, dealTypeLabel, getCompanyDealNextStatuses } from '@/lib/deal/status';
-import { acceptNdaAction, companyAdvanceDealAction, createDisclosureRequestAction } from './actions';
+import { acceptNdaAction, companyAdvanceDealAction, createDisclosureRequestAction, revokeNdaAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +27,7 @@ type CompanyMember = {
 };
 
 type NdaAcceptance = {
+  id: string;
   company_account_id: string;
   nda_version: string;
   accepted_at: string | null;
@@ -61,13 +62,16 @@ const ERROR_MESSAGES: Record<string, string> = {
   request_failed: '開示申請の作成に失敗しました。',
   deal_invalid: '取引IDの指定が不正です。',
   deal_transition_invalid: 'その取引遷移は許可されていません。',
-  deal_transition_failed: '取引状況の更新に失敗しました。'
+  deal_transition_failed: '取引状況の更新に失敗しました。',
+  nda_invalid: 'NDAの指定が不正です。',
+  nda_revoke_failed: 'NDAの失効に失敗しました。'
 };
 
 const SUCCESS_MESSAGES: Record<string, string> = {
   nda_accepted: 'NDA同意を記録しました。',
   request_created: '開示申請を作成しました。発明者の同意と運営承認をお待ちください。',
-  deal_updated: '取引状況を更新しました。'
+  deal_updated: '取引状況を更新しました。',
+  nda_revoked: 'NDAを失効しました。'
 };
 
 function ndaIsActive(nda: NdaAcceptance, nowIso: string): boolean {
@@ -111,7 +115,7 @@ export default async function CompanyPage({
 
   const { data: ndaRows } = await supabase
     .from('nda_acceptances')
-    .select('company_account_id, nda_version, accepted_at, expires_at, revoked_at')
+    .select('id, company_account_id, nda_version, accepted_at, expires_at, revoked_at')
     .is('deleted_at', null)
     .order('accepted_at', { ascending: false });
   const ndas = (ndaRows ?? []) as NdaAcceptance[];
@@ -180,9 +184,19 @@ export default async function CompanyPage({
                   ) : (
                     <ul className="space-y-1">
                       {companyNdas.map((nda, index) => (
-                        <li key={`${company.id}-${index}`} className="text-xs text-slate-600">
-                          {nda.nda_version} / 同意: {nda.accepted_at ? new Date(nda.accepted_at).toLocaleString('ja-JP') : '不明'} /{' '}
-                          {nda.revoked_at ? '取消済み' : ndaIsActive(nda, nowIso) ? '有効' : '期限切れ'}
+                        <li key={`${company.id}-${index}`} className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                          <span>
+                            {nda.nda_version} / 同意: {nda.accepted_at ? new Date(nda.accepted_at).toLocaleString('ja-JP') : '不明'} /{' '}
+                            {nda.revoked_at ? '取消済み' : ndaIsActive(nda, nowIso) ? '有効' : '期限切れ'}
+                          </span>
+                          {!nda.revoked_at && ndaIsActive(nda, nowIso) ? (
+                            <form action={revokeNdaAction}>
+                              <input type="hidden" name="nda_id" value={nda.id} />
+                              <button type="submit" className="rounded border border-red-200 px-2 py-0.5 text-xs font-semibold text-red-700 hover:bg-red-50">
+                                失効する
+                              </button>
+                            </form>
+                          ) : null}
                         </li>
                       ))}
                     </ul>

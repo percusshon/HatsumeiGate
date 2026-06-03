@@ -6,7 +6,13 @@ import {
   COMPANY_REVIEW_STATUS_LABELS,
   companyReviewStatusLabel
 } from '@/lib/company/review';
-import { reviewCompanyAccountAction } from './actions';
+import { addCompanyMemberAction, reviewCompanyAccountAction } from './actions';
+
+const COMPANY_MEMBER_ROLE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'company_user', label: '企業ユーザー' },
+  { value: 'company_admin', label: '企業管理者' },
+  { value: 'company_legal_reviewer', label: '企業法務レビュアー' }
+];
 
 export const dynamic = 'force-dynamic';
 
@@ -23,11 +29,27 @@ type CompanyAccount = {
   created_at: string | null;
 };
 
+type CompanyMember = {
+  id: string;
+  company_account_id: string;
+  user_id: string;
+  role: string;
+};
+
 const ERROR_MESSAGES: Record<string, string> = {
   company_id_missing: '企業IDが指定されていません。',
   forbidden: 'この操作にはoperator/admin権限が必要です。',
   invalid_status: '審査結果の指定が不正です。',
-  update_failed: '審査結果の更新に失敗しました。'
+  update_failed: '審査結果の更新に失敗しました。',
+  member_user_invalid: 'メンバーのユーザーID（UUID）が不正です。',
+  member_role_invalid: 'メンバーのロール指定が不正です。',
+  member_exists: 'そのユーザーは既に同じロールで登録されています。',
+  member_add_failed: '企業メンバーの追加に失敗しました。'
+};
+
+const SUCCESS_MESSAGES: Record<string, string> = {
+  reviewed: '審査結果を更新しました。',
+  member_added: '企業メンバーを追加しました。'
 };
 
 export default async function OperatorCompaniesPage({
@@ -66,8 +88,16 @@ export default async function OperatorCompaniesPage({
   }
 
   const companies = (companyRows ?? []) as CompanyAccount[];
+
+  // operator は company_members を参照できる（migration 0014 company_members_select_internal）。
+  const { data: memberRows } = await supabase
+    .from('company_members')
+    .select('id, company_account_id, user_id, role')
+    .is('deleted_at', null);
+  const members = (memberRows ?? []) as CompanyMember[];
+
   const errorMessage = searchParams?.error ? ERROR_MESSAGES[searchParams.error] : undefined;
-  const showSuccess = searchParams?.success === 'reviewed';
+  const successMessage = searchParams?.success ? SUCCESS_MESSAGES[searchParams.success] : undefined;
 
   return (
     <div className="space-y-6">
@@ -79,8 +109,8 @@ export default async function OperatorCompaniesPage({
       {errorMessage ? (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>
       ) : null}
-      {showSuccess ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">審査結果を更新しました。</p>
+      {successMessage ? (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{successMessage}</p>
       ) : null}
 
       <p className="text-slate-700">招待制・審査制の企業アカウントを承認 / 却下 / 停止します。</p>
@@ -134,6 +164,53 @@ export default async function OperatorCompaniesPage({
                   審査結果を保存
                 </button>
               </form>
+
+              <div className="space-y-2 border-t border-slate-200 pt-3 text-sm text-slate-700">
+                <p className="font-medium">企業メンバー</p>
+                {(() => {
+                  const companyMembers = members.filter((m) => m.company_account_id === company.id);
+                  return companyMembers.length === 0 ? (
+                    <p className="text-xs text-slate-600">メンバーはまだいません。</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {companyMembers.map((member) => (
+                        <li key={member.id} className="text-xs text-slate-600">
+                          {member.user_id} / {member.role}
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()}
+                <form action={addCompanyMemberAction} className="flex flex-wrap items-end gap-2 pt-1">
+                  <input type="hidden" name="company_account_id" value={company.id} />
+                  <label className="space-y-0.5 text-xs text-slate-600">
+                    <span className="block">ユーザーID（UUID）</span>
+                    <input
+                      name="user_id"
+                      type="text"
+                      required
+                      placeholder="00000000-0000-0000-0000-000000000000"
+                      className="w-72 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                    />
+                  </label>
+                  <label className="space-y-0.5 text-xs text-slate-600">
+                    <span className="block">ロール</span>
+                    <select name="member_role" required defaultValue="" className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+                      <option value="" disabled>
+                        選択
+                      </option>
+                      {COMPANY_MEMBER_ROLE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-800">
+                    メンバー追加
+                  </button>
+                </form>
+              </div>
             </li>
           ))}
         </ul>

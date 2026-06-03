@@ -66,6 +66,40 @@ export async function acceptNdaAction(formData: FormData) {
   redirect('/company?success=nda_accepted');
 }
 
+// 企業メンバーによる NDA の失効。SECURITY DEFINER 関数経由（migration 0025）。
+export async function revokeNdaAction(formData: FormData) {
+  const ndaId = typeof formData.get('nda_id') === 'string' ? (formData.get('nda_id') as string).trim() : null;
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+  if (!currentUser.roles.some((role) => COMPANY_ROLES.includes(role))) {
+    redirect('/company?error=forbidden');
+  }
+  if (!ndaId || !UUID_RE.test(ndaId)) {
+    redirect('/company?error=nda_invalid');
+  }
+
+  const supabase = createServerSupabaseClient();
+  const { error } = await supabase.rpc('company_revoke_nda', { _nda_id: ndaId });
+  if (error) {
+    redirect('/company?error=nda_revoke_failed');
+  }
+
+  await recordAuditLog({
+    eventType: 'admin_action',
+    targetTable: 'nda_acceptances',
+    targetId: ndaId,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    metadata: { action: 'nda_revoked' }
+  });
+
+  revalidatePath('/company');
+  redirect('/company?success=nda_revoked');
+}
+
 export async function createDisclosureRequestAction(formData: FormData) {
   const readValue = (key: string) => {
     const value = formData.get(key);

@@ -90,3 +90,51 @@ export async function withdrawInventionAction(formData: FormData) {
   revalidatePath(detailPath);
   redirect(`${detailPath}?success=invention_withdrawn`);
 }
+
+// needs_more_info の発明に発明者が追加情報を提出し screening へ戻す。
+// SECURITY DEFINER 関数経由（migration 0024）。
+export async function respondNeedsMoreInfoAction(formData: FormData) {
+  const readValue = (key: string) => {
+    const value = formData.get(key);
+    return typeof value === 'string' ? value.trim() : null;
+  };
+
+  const inventionId = readValue('invention_id');
+  if (!inventionId) {
+    redirect('/inventor?error=invention_id_missing');
+  }
+  const detailPath = `/inventor/inventions/${inventionId}`;
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect('/login');
+  }
+
+  const note = readValue('note');
+  if (!note) {
+    redirect(`${detailPath}?error=response_required`);
+  }
+
+  const supabase = createServerSupabaseClient();
+  const { error } = await supabase.rpc('inventor_respond_needs_more_info', {
+    _invention_id: inventionId,
+    _note: note
+  });
+
+  if (error) {
+    redirect(`${detailPath}?error=response_failed`);
+  }
+
+  await recordAuditLog({
+    eventType: 'invention_update',
+    targetTable: 'inventions',
+    targetId: inventionId,
+    actorUserId: currentUser.id,
+    actorRole: currentUser.role,
+    inventionId,
+    metadata: { action: 'needs_more_info_response' }
+  });
+
+  revalidatePath(detailPath);
+  redirect(`${detailPath}?success=response_submitted`);
+}

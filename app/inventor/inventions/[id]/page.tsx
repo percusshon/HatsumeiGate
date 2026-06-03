@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/get-current-user';
 import { inventorFacingStatusLabel } from '@/lib/invention/status';
 import { disclosureLevelLabel, disclosureRequestStatusLabel } from '@/lib/company/disclosure';
-import { setDisclosureApprovalAction, withdrawInventionAction } from './disclosure-actions';
+import { respondNeedsMoreInfoAction, setDisclosureApprovalAction, withdrawInventionAction } from './disclosure-actions';
 import { deleteInventionFileAction, uploadInventionFileAction, viewInventionFileAction } from './file-actions';
 
 type SearchParams = {
@@ -47,7 +47,9 @@ const NOTICE_MESSAGES: Record<string, string> = {
   file_not_found: '対象のファイルが見つかりませんでした。',
   file_url_failed: '閲覧用URLの発行に失敗しました。',
   file_delete_failed: 'ファイルの削除に失敗しました。',
-  withdraw_failed: 'この発明は現在のステータスでは取り下げできません。'
+  withdraw_failed: 'この発明は現在のステータスでは取り下げできません。',
+  response_required: '追加情報の内容を入力してください。',
+  response_failed: '追加情報の提出に失敗しました。'
 };
 
 const SUCCESS_MESSAGES: Record<string, string> = {
@@ -55,7 +57,8 @@ const SUCCESS_MESSAGES: Record<string, string> = {
   disclosure_revoked: '開示同意を取り消しました。',
   file_uploaded: 'ファイルをアップロードしました。',
   file_deleted: 'ファイルを削除しました。',
-  invention_withdrawn: '発明を取り下げました。'
+  invention_withdrawn: '発明を取り下げました。',
+  response_submitted: '追加情報を提出しました。審査を再開します。'
 };
 
 // 発明者が取り下げできるフェーズ（migration 0021 の関数と一致させる）。
@@ -264,6 +267,28 @@ export default async function InventionDetailPage({
           <p className="text-xs text-slate-500">
             同意しても、実際の開示はNDA締結・運営承認・閲覧ログを満たした場合に限られます。
           </p>
+        </section>
+      ) : null}
+
+      {invention.status === 'needs_more_info' ? (
+        <section className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-5">
+          <h4 className="text-lg font-semibold text-amber-900">追加情報のお願い</h4>
+          <p className="text-sm text-slate-700">
+            運営から追加情報の依頼があります。内容を補足して提出すると、審査が再開されます。
+          </p>
+          <form action={respondNeedsMoreInfoAction} className="space-y-2">
+            <input type="hidden" name="invention_id" value={invention.id} />
+            <textarea
+              name="note"
+              rows={3}
+              required
+              placeholder="追加情報・補足内容"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button type="submit" className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">
+              追加情報を提出する
+            </button>
+          </form>
         </section>
       ) : null}
 
