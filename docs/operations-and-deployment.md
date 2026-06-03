@@ -63,3 +63,61 @@ npm run dev
 - **ウイルススキャン**（`docs/storage-policy-plan.md` §10）: アップロード時の非同期スキャン。
   スキャナ選定（例: ClamAV / クラウドスキャンAPI）と `invention_files` への
   スキャン状態列（migration）追加が必要なため、方式決定後に着手する。
+
+## 8. 本番デプロイ手順書（ユーザー作業）
+
+コード側は本番化準備が完了している。以下は **アカウント作成・課金・秘密鍵の保持・ダッシュボード操作・ドメイン設定** を伴うため、ユーザー自身が実施する。各ステップの「担当」を明記する。
+
+> **最重要**: 本番への適用は `supabase db push`（migration のみ）を使う。
+> `supabase db reset` は **使わない**（`supabase/seed.sql` のテスト専用データが本番に入るため）。
+> ストレージのバケット（`invention-files` / `company-disclosure-files` / `legal-documents` /
+> `public-assets`）と RLS は migration `0011` 等で自動作成されるので、手動作成は不要。
+
+### 8.1 Supabase 本番プロジェクト（担当: ユーザー）
+
+1. supabase.com で本番プロジェクトを作成。リージョンは東京 `ap-northeast-1` 推奨。DB パスワードは強固に設定し安全に保管する。
+2. CLI で本番へリンクし、スキーマを適用する:
+   ```bash
+   supabase login
+   supabase link --project-ref <project-ref>
+   supabase db push          # migration を適用（buckets / RLS / RPC を作成）
+   ```
+   - `db reset` は禁止（テスト seed が入る）。本番は `db push` のみ。
+3. ダッシュボード Authentication で **Site URL** と **Redirect URLs** を Vercel 本番ドメインに設定（Magic Link の戻り先）。
+4. **本番メール送信（SMTP）** を設定。Supabase 内蔵メールは検証用で送信制限があり本番不可。外部プロバイダ（SendGrid / Resend / Amazon SES 等）の SMTP を Auth に登録する。
+5. キーを控える: `Project URL` / `anon (publishable) key` / `service_role key`。
+
+### 8.2 Vercel デプロイ（担当: ユーザー）
+
+1. Vercel に GitHub `percusshon/HatsumeiGate` を Import（Framework: Next.js は自動検出）。
+2. Environment Variables（Production スコープ）を設定:
+
+   | 変数 | 値 | 注意 |
+   | --- | --- | --- |
+   | `NEXT_PUBLIC_SUPABASE_URL` | 本番 Project URL | クライアント可 |
+   | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | publishable key | クライアント可 |
+   | `NEXT_PUBLIC_SITE_URL` | 本番ドメイン | クライアント可 |
+   | `SUPABASE_SERVICE_ROLE_KEY` | service_role key | **サーバー専用**。`NEXT_PUBLIC_` を付けない／クライアントに出さない |
+
+3. デプロイ後に実機確認（§6 のチェックリストも併用）:
+   - 企業ユーザーでファイル閲覧 → **日本語社名の透かしが表示される**（フォントが本番バンドルに含まれているか＝`outputFileTracingIncludes` の動作確認）。豆腐化したらフォント未バンドル。
+   - Magic Link でログインできる（SMTP / Redirect URL が正しいか）。
+4. 独自ドメインを使う場合は Vercel で割当て、Supabase の Site URL / Redirect URL も同じドメインへ更新する。
+
+### 8.3 監視（担当: ユーザー、コード組込は要相談）
+
+- **Supabase**: Dashboard の Logs（API / DB / Auth）。Pro 以上で Reports / Advisors により RLS 等の警告を検知できる。デプロイ後に一度 Advisors を確認する。
+- **Vercel**: Observability / Logs を有効化。エラー追跡（Sentry 等）を入れる場合はコード側の組込が必要（依存追加は要承認）。
+- **外形監視**: トップページ＋ログイン導線を Better Uptime / UptimeRobot 等で定期チェック。
+
+### 8.4 バックアップ（担当: ユーザー）
+
+- **Supabase DB**: プラン選択が要点。Free はバックアップが限定的、**Pro 以上で日次バックアップ＋PITR（7日）**。本番は Pro 以上を推奨。
+- **復元テスト**: 設定後に一度リストアを実施し、手順と所要時間を確認する。
+- **ストレージ（バケット内ファイル）**: DB バックアップとは別管理。重要ファイルのエクスポート/二重化方針を運用判断で決める。
+
+### 8.5 コード側で対応可能（担当: Claude、要依頼）
+
+- Sentry 等のエラーモニタリング組込（依存追加は要承認）。
+- デプロイ前後の疎通チェック手順・RLS Advisors 確認手順の整備。
+- `.env.example` と本番 env 対応表の整合チェック。
