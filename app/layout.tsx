@@ -13,10 +13,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <SiteNav />
           </header>
           <main className="flex-1">{children}</main>
-          <footer className="border-t border-slate-200 pt-4 text-sm text-slate-500">
-            <p>
-              This is a minimal scaffold. 詳細機能は次フェーズで追加します。
-            </p>
+          <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-200 pt-4 text-sm text-slate-500">
+            <a href="/legal" className="hover:text-slate-700 hover:underline">利用規約</a>
+            <a href="/privacy" className="hover:text-slate-700 hover:underline">プライバシーポリシー</a>
+            <span className="ml-auto text-xs">© Hatsumei Gate</span>
           </footer>
         </div>
       </body>
